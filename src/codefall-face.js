@@ -182,6 +182,11 @@ export class CodefallFace extends EventTarget {
    *   { type:'error', message }
    */
   attachAgentSocket(url, { reconnect = true } = {}) {
+    // Accept a bare path ('/agent-hub') and resolve it same-origin.
+    if (url.startsWith('/')) {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      url = `${proto}://${location.host}${url}`;
+    }
     if (!this._agentEventsWired) {
       this._agentEventsWired = true;
       for (const t of ['transcript', 'state', 'emotion', 'error']) {

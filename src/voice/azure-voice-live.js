@@ -106,6 +106,9 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
         else this.emit('error', { message: 'Voice Live socket error' });
       };
       ws.onclose = () => {
+        // Only report loss of a session that actually opened — a rejected
+        // handshake already surfaced through onerror/init rejection.
+        if (this._ws !== ws) return;
         this._ws = null;
         this.emit('error', { message: 'Voice Live disconnected', fatal: true });
       };

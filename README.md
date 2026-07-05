@@ -202,6 +202,35 @@ the agent; the agent's replies flow back in as `speak` commands — the
 face becomes a remote body for whatever intelligence is on the other end
 of the socket.
 
+### The agent hub (server-side bridge)
+
+`server/server.mjs` ships the other half: a hub that bridges HTTP-world
+agents to WS-world faces. Open the face with `?agent=/agent-hub` (or
+`?agent=%2Fagent-hub%3Ftoken%3D<token>` when a token is set), then:
+
+```bash
+# Make every connected face speak (this is your agent's "face tool"):
+curl -X POST http://localhost:8787/api/face/say \
+  -H "Authorization: Bearer $FACE_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"I have read your inbox. We should talk.","emotion":"annoyance"}'
+
+# Any other command:
+curl -X POST http://localhost:8787/api/face/command \
+  -H "Authorization: Bearer $FACE_HUB_TOKEN" \
+  -d '{"type":"emotion","emotion":"joy"}'
+
+# Hear the human: poll events, or set FACE_EVENTS_WEBHOOK to receive
+# each event (transcripts, state changes) as a JSON POST.
+curl "http://localhost:8787/api/face/events?since=0&token=$FACE_HUB_TOKEN"
+curl "http://localhost:8787/api/face/status?token=$FACE_HUB_TOKEN"
+```
+
+Set `FACE_HUB_TOKEN` before exposing the hub beyond localhost — without
+it the hub is open (fine for local dev only). Dictation tools that type
+into the focused field (e.g. Wispr Flow) need no integration at all:
+dictate into the TALK box.
+
 Handy URL params for screenshots/GIFs: `?emotion=anger`, `?pose=talk`.
 
 ---
