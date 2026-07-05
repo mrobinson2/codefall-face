@@ -12,6 +12,13 @@ black, CRT scanlines, digital tearing, Wintermute energy: an intelligence
 static host), open the page, press **DEMO**. No accounts, no keys — the
 face runs on Web Speech and pure canvas.
 
+**Two visual themes**, toggled with the ◐ button (or `?theme=`, or
+`face.setTheme()`): **wintermute** (default) — a monochrome ice-white
+voxel ghost inside a broken neon halo, shedding glyph debris; and
+**codefall** — the classic neon-green matrix phosphor. Both share the
+same procedural face; only palette, glyph vocabulary, halo intensity,
+and rain density change. The ▾ button minimizes the control console.
+
 ---
 
 ## Run it
