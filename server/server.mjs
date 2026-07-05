@@ -22,6 +22,8 @@
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readFileSync, existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -41,6 +43,19 @@ const LACY_REPLY_PATH = process.env.LACY_REPLY_PATH || '/user/ai/reply';
 
 const FACE_HUB_TOKEN = process.env.FACE_HUB_TOKEN; // optional shared secret
 const FACE_EVENTS_WEBHOOK = process.env.FACE_EVENTS_WEBHOOK; // optional POST target
+
+// Piper TTS (fully local neural voice — see server/setup-piper.sh).
+// Defaults point at the setup script's output; override via env.
+const SERVER_DIR = fileURLToPath(new URL('.', import.meta.url));
+const PIPER_BIN = process.env.PIPER_BIN || join(SERVER_DIR, 'piper-venv/bin/piper');
+const PIPER_VOICE = process.env.PIPER_VOICE || join(SERVER_DIR, 'voices/en_US-danny-low.onnx');
+let piperRate = 16000;
+let piperReady = false;
+try {
+  const cfg = JSON.parse(readFileSync(`${PIPER_VOICE}.json`, 'utf8'));
+  piperRate = cfg.audio?.sample_rate || 16000;
+  piperReady = existsSync(PIPER_BIN);
+} catch { /* piper not set up — /api/tts reports unavailable */ }
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -182,10 +197,56 @@ async function handleFaceApi(req, res, path) {
   json(404, { error: 'not found' });
 }
 
+// ---- Piper TTS endpoint ---------------------------------------------------
+async function handleTts(req, res, path) {
+  if (path === '/api/tts/health') {
+    res.writeHead(piperReady ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: piperReady, voice: piperReady ? PIPER_VOICE.split('/').pop() : null, sampleRate: piperRate }));
+    return;
+  }
+  if (req.method !== 'POST') { res.writeHead(404).end(); return; }
+  if (!piperReady) {
+    res.writeHead(503, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ error: 'piper not set up — run server/setup-piper.sh' }));
+    return;
+  }
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  let text;
+  try { text = JSON.parse(body || '{}').text; } catch { /* fall through */ }
+  if (!text || !text.trim()) {
+    res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'text required' }));
+    return;
+  }
+  const child = spawn(PIPER_BIN, ['--model', PIPER_VOICE, '--output-raw'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  res.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'X-Sample-Rate': String(piperRate),
+    'Cache-Control': 'no-store',
+  });
+  child.stdout.pipe(res);
+  let errOut = '';
+  child.stderr.on('data', (d) => { errOut += d; });
+  child.on('close', (code) => {
+    if (code !== 0) console.error('[piper] exit', code, errOut.slice(-300));
+    res.end();
+  });
+  child.on('error', (err) => {
+    console.error('[piper] spawn failed:', err.message);
+    res.end();
+  });
+  req.on('close', () => child.kill('SIGKILL')); // client interrupted
+  child.stdin.write(text.replace(/\s+/g, ' ').trim() + '\n');
+  child.stdin.end();
+}
+
 const server = http.createServer((req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
   if (path.startsWith('/api/lacy/')) return handleLacy(req, res, path);
   if (path.startsWith('/api/face/')) return handleFaceApi(req, res, path);
+  if (path.startsWith('/api/tts')) return handleTts(req, res, path);
   return serveStatic(req, res);
 });
 
@@ -266,6 +327,7 @@ server.listen(PORT, () => {
   console.log(`  http://localhost:${PORT}`);
   console.log(`  Voice Live relay: ${AZURE_ENDPOINT && AZURE_KEY ? 'ARMED' : 'not configured (local Web Speech fallback active)'}`);
   console.log(`  Lacy proxy:       ${LACY_API_KEY ? 'ARMED' : 'not configured'}`);
+  console.log(`  Piper TTS:        ${piperReady ? `ARMED (${PIPER_VOICE.split('/').pop()} @ ${piperRate} Hz)` : 'not set up (run server/setup-piper.sh)'}`);
   console.log(`  Agent hub:        ws /agent-hub + POST /api/face/say ` +
     `(auth: ${FACE_HUB_TOKEN ? 'token' : 'OPEN — set FACE_HUB_TOKEN before exposing'}; ` +
     `webhook: ${FACE_EVENTS_WEBHOOK || 'off'})\n`);

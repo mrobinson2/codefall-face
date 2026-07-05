@@ -2,3 +2,5 @@ node_modules/
 .env
 .DS_Store
 *.log
+server/piper-venv/
+server/voices/

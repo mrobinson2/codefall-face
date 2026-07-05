@@ -90,12 +90,19 @@ AI-reply REST API (through the backend proxy, key server-side) for the
 voice SDK, that adapter is the single file to upgrade. Nothing is faked:
 each adapter reports real capabilities and real errors.
 
+**Local neural: Piper** — run `server/setup-piper.sh` once and the face
+speaks with [Piper](https://github.com/rhasspy/piper)'s `danny` voice,
+synthesized entirely on your machine: no cloud, no keys, and because it
+plays through Web Audio it gets the ring-modulator ghost FX and
+waveform-accurate lip sync that browser voices can't.
+
 **Always available: Local (Web Speech)** — `speechSynthesis` +
 `webkitSpeechRecognition`. Fully client-side, credential-free, and the
 engine behind demo mode.
 
-Provider order at boot: `azure → local` (config `provider: 'auto'`), or
-pin one with `provider: 'azure' | 'lacy' | 'local'`.
+Provider order at boot: `azure → piper → local` (config
+`provider: 'auto'`), or pin one with
+`provider: 'azure' | 'piper' | 'lacy' | 'local'`.
 
 ---
 

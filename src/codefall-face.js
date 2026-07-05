@@ -25,6 +25,7 @@ import { SpeechEngine } from './speech/speech-engine.js';
 import { LocalSpeechAdapter } from './voice/local-speech.js';
 import { AzureVoiceLiveAdapter } from './voice/azure-voice-live.js';
 import { LacyAdapter } from './voice/lacy.js';
+import { PiperAdapter } from './voice/piper.js';
 
 // Canned persona lines for when no conversational backend is wired.
 // Clearly not an AI — just enough ghost to make the static demo talk back.
@@ -258,11 +259,16 @@ export class CodefallFace extends EventTarget {
   async _initProvider(forced = null) {
     const want = forced || this.config.provider;
     const attempts = [];
-    if (want === 'auto') attempts.push('azure', 'local');
+    if (want === 'auto') attempts.push('azure', 'piper', 'local');
     else attempts.push(want);
 
     for (const name of attempts) {
-      const Adapter = { azure: AzureVoiceLiveAdapter, lacy: LacyAdapter, local: LocalSpeechAdapter }[name];
+      const Adapter = {
+        azure: AzureVoiceLiveAdapter,
+        piper: PiperAdapter,
+        lacy: LacyAdapter,
+        local: LocalSpeechAdapter,
+      }[name];
       if (!Adapter) continue;
       const adapter = new Adapter(this.config);
       try {

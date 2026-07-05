@@ -61,6 +61,38 @@ verbatim. Never put the key in client code or a query string.
 
 ---
 
+## 1b. Piper (fully local neural voice — no cloud, no keys)
+
+What you get: a neural TTS voice ([Piper](https://github.com/rhasspy/piper),
+default voice `en_US-danny-low`) synthesized entirely on your machine.
+Because playback goes through Web Audio, this path gets the **ghost FX
+chain** (ring-modulator robot treatment) and **waveform-accurate lip
+sync** — the two things the browser's built-in voices can't have.
+
+1. One-time setup (Python 3 required; downloads ~20 MB of model):
+
+   ```bash
+   cd server && ./setup-piper.sh
+   ```
+
+2. Restart the server. The banner should show `Piper TTS: ARMED`.
+
+3. Open the page — provider auto-selection prefers Piper over the
+   browser voice (`VOICE:PIPER` in the header). Azure still wins when
+   its relay is configured.
+
+Swap voices by downloading any `.onnx` + `.onnx.json` pair from
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) into
+`server/voices/` and pointing `PIPER_VOICE` at it. Browse samples at
+https://rhasspy.github.io/piper-samples/. Tune or disable the robot
+treatment via `voiceFx` in `src/config.js`.
+
+Latency note: the engine loads per request, so expect ~0.5–2 s before
+speech starts on a low-tier voice. Fine for an ambient ghost; if you
+need snappier, run Piper's HTTP server mode and point `/api/tts` at it.
+
+---
+
 ## 2. Hermes (or any agent gateway) via the agent hub
 
 What you get: a server-side agent that *possesses* the face — it speaks
