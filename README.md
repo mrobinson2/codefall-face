@@ -2,7 +2,7 @@
 
 A talking face for an AI agent, rendered entirely from falling neon glyphs.
 
-![Codefall theme — neon green data ghost](assets/codefall-theme.png)
+![Live demo — the ghost cycles neutral, anger, joy, sadness while speaking](assets/codefall-demo.gif)
 
 Not an avatar. Not a 3D head. A **data ghost** — a male face with a hard
 jawline that condenses out of matrix rain, speaks, emotes, glitches, and
@@ -22,7 +22,9 @@ ghost inside a broken neon halo. Both share the same procedural face;
 only palette, glyph vocabulary, halo intensity, and rain density change.
 The ▾ button minimizes the control console.
 
-![Wintermute theme — ice-white voxel ghost](assets/wintermute-theme.png)
+| Codefall (default) | Wintermute |
+|---|---|
+| ![Codefall theme](assets/codefall-theme.png) | ![Wintermute theme](assets/wintermute-theme.png) |
 
 ---
 

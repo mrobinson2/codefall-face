@@ -314,9 +314,9 @@ export class CodefallRenderer {
     if (dyn.blink > 0.15) {
       ctx.globalCompositeOperation = 'lighter';
       for (const eye of this.model.eyePositions(p, dyn)) {
-        const rad = eye.r * 1.9;
+        const rad = eye.r * 1.5;
         const g = ctx.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, rad);
-        const a = Math.min(0.42, 0.16 * eye.glow * dyn.coherence);
+        const a = Math.min(0.3, 0.13 * eye.glow * dyn.coherence);
         g.addColorStop(0, `hsla(${glowHue}, ${glowSat}%, 72%, ${a})`);
         g.addColorStop(1, `hsla(${glowHue}, ${glowSat}%, 50%, 0)`);
         ctx.fillStyle = g;

@@ -220,11 +220,13 @@ export class FaceModel {
         const er = ex * ex + ey * ey;
         if (er < 1) {
           // White-hot core → bright iris → dark sclera gap → luminous
-          // limbal ring: concentric structure makes the stare radiant.
-          b = er < 0.18 ? 1.6 * p.eyeGlow
-            : er < 0.6 ? 1.05 * p.eyeGlow
-            : er < 0.85 ? 0.55 * p.eyeGlow
-            : 0.9 * p.eyeGlow;
+          // limbal ring. Per-band clamps keep the concentric structure
+          // legible even when an emotion pushes eyeGlow far above 1 —
+          // otherwise anger saturates the whole ellipse into one blob.
+          b = er < 0.18 ? Math.min(1.4, 1.6 * p.eyeGlow)
+            : er < 0.6 ? Math.min(1.2, 1.05 * p.eyeGlow)
+            : er < 0.85 ? Math.min(0.85, 0.55 * p.eyeGlow)
+            : Math.min(1.1, 0.9 * p.eyeGlow);
           reg = REGION.EYE;
         } else if (er < 2.8) {
           b -= 0.07; // socket shadow
@@ -254,11 +256,11 @@ export class FaceModel {
               b = 0.05;
               reg = REGION.MOUTH_INNER;
             } else if (Math.abs(v1 - yU) < lipT || Math.abs(v1 - yL) < lipT) {
-              b = Math.max(b, lipBright);
+              b = Math.max(b, Math.min(1.15, lipBright));
               reg = REGION.MOUTH;
             } else if (v1 > yU && v1 < yL) {
               // Inner mouth: dark void that boils with speech energy
-              b = 0.18 + dyn.energy * (0.45 + nz * 0.5);
+              b = Math.min(0.9, 0.18 + dyn.energy * (0.45 + nz * 0.5));
               reg = REGION.MOUTH_INNER;
             }
           }
