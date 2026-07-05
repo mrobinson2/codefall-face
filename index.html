@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>CODEFALL // FACE</title>
+  <meta name="description"
+        content="A talking AI face assembled from falling neon glyphs. A data ghost with a jawline." />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13' fill='%2300ff66' font-family='monospace'>ﾊ</text></svg>" />
+  <!--
+    Optional runtime config (no secrets here — the relay holds the key):
+    <script>window.CODEFALL_CONFIG = { provider: 'azure', azure: { relayUrl: 'wss://myhost/relay' } };</script>
+  -->
+</head>
+<body>
+  <header id="topbar">
+    <div id="brand">CODEFALL<span class="dim">//</span>FACE</div>
+    <div id="signal">
+      <span id="provider">VOICE:—</span>
+      <span id="status" data-state="booting">MATERIALIZING</span>
+    </div>
+  </header>
+
+  <main id="stage" aria-label="Codefall Face — animated glyph face"></main>
+  <div id="crt" aria-hidden="true"></div>
+
+  <section id="console">
+    <div id="emotions" role="toolbar" aria-label="Emotion selection"></div>
+
+    <div id="talkrow">
+      <input id="say-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="transmit words to the ghost…" aria-label="Message to speak" />
+      <button id="say-btn" class="btn primary">TALK</button>
+    </div>
+
+    <div id="controls">
+      <button id="listen" class="btn">LISTEN</button>
+      <button id="interrupt" class="btn">INTERRUPT</button>
+      <button id="mute" class="btn">MUTE</button>
+      <button id="demo" class="btn accent">DEMO</button>
+      <button id="debug-toggle" class="btn ghost" aria-label="Toggle debug panel">▚</button>
+    </div>
+
+    <div id="transcript" aria-live="polite"></div>
+
+    <div id="debug">
+      <div id="debug-stats">—</div>
+      <div id="debug-lines"></div>
+    </div>
+  </section>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

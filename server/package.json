@@ -1,0 +1,14 @@
+{
+  "name": "codefall-face-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static host + Azure Voice Live relay + Lacy proxy for Codefall Face",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
