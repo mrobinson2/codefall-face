@@ -161,41 +161,55 @@ body {
   border-top: 1px solid var(--green-faint);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  padding: 8px 44px calc(8px + env(safe-area-inset-bottom)) 10px;
+  padding: 6px 10px calc(8px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+/* Docking is a desktop affordance; mobile keeps the full-width strip. */
+@media (max-width: 899px) {
+  .dock-btn { display: none; }
+  #console-title { cursor: default; }
+}
 
-#console-toggle {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 32px;
-  height: 32px;
+#console-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+#console-title {
+  flex: 1;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--green-dim);
+  opacity: 0.8;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+  padding: 4px 2px;
+  touch-action: none;
+}
+#console-title:active { cursor: grabbing; }
+.dock-btn, #console-toggle {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
   background: transparent;
   border: 1px solid var(--green-faint);
   border-radius: 3px;
   color: var(--green-dim);
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   touch-action: manipulation;
-  z-index: 1;
 }
-#console-toggle:active { background: rgba(0, 255, 102, 0.12); }
+.dock-btn:active, #console-toggle:active { background: rgba(0, 255, 102, 0.12); }
+.dock-btn.active { color: var(--green); border-color: var(--green-dim); }
 
-/* Minimized: everything hides except the expand tab. */
-#console.collapsed { padding: 6px 44px 6px 10px; min-height: 44px; }
-#console.collapsed > :not(#console-toggle) { display: none; }
-@media (min-width: 900px) {
-  #console.collapsed {
-    width: auto;
-    left: auto;
-    right: 18px;
-    transform: none;
-  }
-}
+/* Minimized: everything hides except the header bar. */
+#console.collapsed { min-height: 0; padding-top: 6px; padding-bottom: 6px; }
+#console.collapsed > :not(#console-bar) { display: none; }
+#console.collapsed #console-title { pointer-events: auto; }
 
 #emotions {
   display: flex;
@@ -309,6 +323,24 @@ body {
     border-radius: 6px;
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 255, 102, 0.06);
   }
+  /* Corner docks: narrower panel, out of the face's way. */
+  #console[data-dock="left"] {
+    left: 18px;
+    right: auto;
+    transform: none;
+    width: min(400px, 46vw);
+  }
+  #console[data-dock="right"] {
+    left: auto;
+    right: 18px;
+    transform: none;
+    width: min(400px, 46vw);
+  }
+  #console[data-dock="free"] {
+    transform: none;
+    width: min(400px, 46vw);
+  }
+  #console.collapsed { width: auto; min-width: 230px; }
   #topbar { background: transparent; border-bottom-color: transparent; position: absolute; width: 100%; }
   #stage { position: fixed; inset: 0; }
 }

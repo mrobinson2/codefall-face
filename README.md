@@ -26,6 +26,10 @@ The ▾ button minimizes the control console.
 
 ---
 
+**Integration guides** — step-by-step wiring for Azure Voice Live,
+Hermes/agent gateways, Wispr Flow, and Lacy.ai:
+[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
 ## Run it
 
 ### Static (face + demo + local voice, no backend)

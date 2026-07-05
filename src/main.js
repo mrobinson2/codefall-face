@@ -113,9 +113,11 @@ $('#theme-toggle').onclick = () => {
   debugLog(`theme → ${face.theme}`);
 };
 
-// ---- console minimize -------------------------------------------------
+// ---- console minimize + docking + drag ---------------------------------
 const consoleEl = $('#console');
 const consoleToggle = $('#console-toggle');
+const isDesktop = () => window.matchMedia('(min-width: 900px)').matches;
+
 function setCollapsed(collapsed) {
   consoleEl.classList.toggle('collapsed', collapsed);
   consoleToggle.textContent = collapsed ? '▴' : '▾';
@@ -124,6 +126,68 @@ function setCollapsed(collapsed) {
 }
 consoleToggle.onclick = () => setCollapsed(!consoleEl.classList.contains('collapsed'));
 if (localStorage.getItem('codefall-console') === 'min') setCollapsed(true);
+
+function applyDock(dock, pos) {
+  consoleEl.dataset.dock = dock;
+  if (dock === 'free' && pos) {
+    const w = consoleEl.offsetWidth || 400;
+    const x = Math.min(Math.max(4, pos.x), window.innerWidth - w - 4);
+    const y = Math.min(Math.max(4, pos.y), window.innerHeight - 60);
+    consoleEl.style.left = `${x}px`;
+    consoleEl.style.top = `${y}px`;
+    consoleEl.style.bottom = 'auto';
+    consoleEl.style.right = 'auto';
+  } else {
+    consoleEl.style.left = '';
+    consoleEl.style.top = '';
+    consoleEl.style.bottom = '';
+    consoleEl.style.right = '';
+  }
+  for (const b of document.querySelectorAll('.dock-btn')) {
+    b.classList.toggle('active', b.dataset.dock === dock);
+  }
+  localStorage.setItem('codefall-dock', JSON.stringify({ dock, pos: pos || null }));
+}
+for (const b of document.querySelectorAll('.dock-btn')) {
+  b.onclick = () => applyDock(b.dataset.dock);
+}
+
+// Drag by the header bar (desktop only).
+const dragHandle = $('#console-title');
+dragHandle.addEventListener('pointerdown', (e) => {
+  if (!isDesktop()) return;
+  e.preventDefault();
+  const rect = consoleEl.getBoundingClientRect();
+  const offX = e.clientX - rect.left;
+  const offY = e.clientY - rect.top;
+  dragHandle.setPointerCapture(e.pointerId);
+  let last = null;
+  const move = (ev) => {
+    last = { x: ev.clientX - offX, y: ev.clientY - offY };
+    applyDock('free', last);
+  };
+  const up = () => {
+    dragHandle.removeEventListener('pointermove', move);
+    dragHandle.removeEventListener('pointerup', up);
+    if (last) applyDock('free', last); // persists final spot
+  };
+  dragHandle.addEventListener('pointermove', move);
+  dragHandle.addEventListener('pointerup', up);
+});
+
+// Restore dock preference; re-clamp free positions on resize.
+try {
+  const saved = JSON.parse(localStorage.getItem('codefall-dock') || 'null');
+  if (saved?.dock && isDesktop()) applyDock(saved.dock, saved.pos);
+} catch { /* fresh start */ }
+const dockParam = new URLSearchParams(location.search).get('dock');
+if (dockParam && isDesktop()) applyDock(dockParam);
+window.addEventListener('resize', () => {
+  if (consoleEl.dataset.dock === 'free') {
+    const r = consoleEl.getBoundingClientRect();
+    applyDock('free', { x: r.left, y: r.top });
+  }
+});
 
 // ---- debug panel ------------------------------------------------------------
 const debugEl = $('#debug');

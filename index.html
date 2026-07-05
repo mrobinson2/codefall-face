@@ -36,7 +36,13 @@
   <div id="crt" aria-hidden="true"></div>
 
   <section id="console">
-    <button id="console-toggle" aria-label="Minimize control panel" title="Minimize panel">▾</button>
+    <div id="console-bar">
+      <span id="console-title" title="Drag to move">CTRL // CODEFALL</span>
+      <button class="dock-btn" data-dock="left" aria-label="Dock lower left" title="Dock lower left">◧</button>
+      <button class="dock-btn" data-dock="center" aria-label="Dock bottom center" title="Dock bottom center">▣</button>
+      <button class="dock-btn" data-dock="right" aria-label="Dock lower right" title="Dock lower right">◨</button>
+      <button id="console-toggle" aria-label="Minimize control panel" title="Minimize panel">▾</button>
+    </div>
     <div id="emotions" role="toolbar" aria-label="Emotion selection"></div>
 
     <div id="talkrow">
