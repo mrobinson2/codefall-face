@@ -167,7 +167,7 @@ export class CodefallRenderer {
           const bi = Math.min(BLOCKS.length - 1, (intensity * BLOCKS.length) | 0);
           return CHAR_INDEX.get(BLOCKS[bi]);
         }
-        if (Math.random() < 0.35) {
+        if (Math.random() < 0.2) {
           return CHAR_INDEX.get(RAIN[(Math.random() * RAIN.length) | 0]);
         }
         const i = Math.min(RAMP.length - 1, (intensity * RAMP.length) | 0);

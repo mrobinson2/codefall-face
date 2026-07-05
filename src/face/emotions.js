@@ -10,17 +10,19 @@
  * so transitions read as the entity *reorganizing itself*, not a swap.
  */
 
+// The resting face is deliberately not friendly: brows low, glow hot,
+// mouth set slightly grim — a Wintermute idle, not an assistant idle.
 export const NEUTRAL = {
   // Facial topology
-  browAngle: 0.0, //  + = inner ends raised (sorrow), − = inner ends lowered (anger)
-  browHeight: 0.0, //  vertical brow offset, + = raised
+  browAngle: -0.05, //  + = inner ends raised (sorrow), − = inner ends lowered (anger)
+  browHeight: -0.12, //  vertical brow offset, + = raised
   eyeOpen: 1.0, //  eyelid aperture multiplier
   eyeWidth: 1.0, //  horizontal eye scale
-  eyeGlow: 1.0, //  iris/void luminance multiplier
+  eyeGlow: 1.15, //  iris/void luminance multiplier
   gazeJitter: 0.0, //  saccadic instability 0..1
-  mouthCurve: 0.0, //  + = corners up, − = corners down
+  mouthCurve: -0.08, //  + = corners up, − = corners down
   mouthWidth: 1.0,
-  mouthTension: 0.5, //  lip-line sharpness/brightness
+  mouthTension: 0.6, //  lip-line sharpness/brightness
   jawSharp: 0.6, //  jawline angularity 0..1
   asym: 0.0, //  left/right asymmetry 0..1
 

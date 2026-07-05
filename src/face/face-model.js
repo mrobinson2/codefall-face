@@ -32,7 +32,7 @@ export class FaceModel {
     this.grid = grid;
     const { cols, rows, cellW, cellH, width, height } = grid;
     const cx = width / 2;
-    const cy = height * 0.44;
+    const cy = height * 0.42;
     // Uniform scale keeps facial proportions on any aspect ratio.
     const scale = Math.min(height * 0.40, width * 0.50);
     this.scale = scale;
@@ -99,10 +99,12 @@ export class FaceModel {
     const taperPow = 1.3 + 1.1 * p.jawSharp; // higher = harder jaw angle
 
     // ---- feature parameters ----------------------------------------
-    const browV = -0.36 - p.browHeight * 0.10;
+    // Brows sit low, almost on the eyes — the hooded glare is what makes
+    // the face read as predatory rather than friendly.
+    const browV = -0.30 - p.browHeight * 0.10;
     const browThick = 0.048;
     const eyeCY = -0.16;
-    const eyeRX = 0.125 * p.eyeWidth;
+    const eyeRX = 0.135 * p.eyeWidth;
     const asymT = Math.sin(t * 2.7) * p.asym; // slow left/right desync
 
     const open = dyn.mouthOpen;
@@ -160,20 +162,36 @@ export class FaceModel {
           continue;
         }
 
-        // ---- interior base: near-dark, so contours carry the face ----
-        let b = 0.05 + nz * 0.04 + Math.sin(t * 0.7 + nz * 9) * 0.015;
+        // ---- interior base: near-black — only the line-work glows ----
+        let b = 0.035 + nz * 0.03 + Math.sin(t * 0.7 + nz * 9) * 0.012;
         let reg = REGION.FACE;
         const au = Math.abs(u0);
         const s = u0 < 0 ? -1 : 1;
 
         // Faint facial planes — kept dim so the line-work dominates
         const fh = u0 * u0 / 0.09 + (v1 + 0.55) * (v1 + 0.55) / 0.06;
-        if (fh < 1) b += 0.03 * (1 - fh);
-        const cbx = au - 0.38, cby = v1 - 0.02;
-        const cb = (cbx * cbx + cby * cby) / (0.15 * 0.15);
-        if (cb < 1) b += 0.07 * (1 - cb);
+        if (fh < 1) b += 0.02 * (1 - fh);
         const ch = (u0 * u0 + (v1 - 0.80) * (v1 - 0.80)) / (0.12 * 0.12);
-        if (ch < 1) b += 0.06 * (1 - ch);
+        if (ch < 1) b += 0.05 * (1 - ch);
+
+        // Gaunt cheekbone: a thin light-line raking from the cheekbone
+        // down toward the mouth corner (the edge that catches the glow).
+        {
+          const pax = au - 0.36, pay = v1 - 0.10;
+          const bax = -0.14, bay = 0.30;
+          let h = (pax * bax + pay * bay) / (bax * bax + bay * bay);
+          h = h < 0 ? 0 : h > 1 ? 1 : h;
+          const dxc = pax - bax * h, dyc = pay - bay * h;
+          if (dxc * dxc + dyc * dyc < 0.022 * 0.022) b = Math.max(b, 0.42);
+        }
+
+        // Forehead circuit traces — machine etchings under the skin.
+        if (v1 < -0.42) {
+          if (au < 0.012 && v1 > -0.78) b = Math.max(b, 0.38);
+          if (au < 0.09 && (Math.abs(v1 + 0.62) < 0.012 || Math.abs(v1 + 0.50) < 0.012)) {
+            b = Math.max(b, 0.3);
+          }
+        }
 
         // ---- brows: angular ridges sweeping up toward the temples ----
         if (v1 > browV - 0.18 && v1 < browV + 0.16 && au > 0.06 && au < 0.48) {
@@ -186,6 +204,8 @@ export class FaceModel {
             if (dist < browThick) {
               b = Math.max(b, 1.05 * (1 - dist / browThick) + 0.3);
               reg = REGION.BROW;
+            } else if (v1 > by && v1 < by + 0.09) {
+              b -= 0.09; // supraorbital shadow — the shelf that hoods the eyes
             }
           }
         }
@@ -193,16 +213,21 @@ export class FaceModel {
         // ---- eyes ----------------------------------------------------
         const eyeOpenSide =
           p.eyeOpen * dyn.blink * (1 + s * asymT * 0.25);
-        const eyeRY = Math.max(0.012, 0.085 * eyeOpenSide);
+        const eyeRY = Math.max(0.012, 0.075 * eyeOpenSide);
         const ex = (u0 - s * 0.26 - dyn.gazeX * 0.02) / eyeRX;
-        const ey = (v1 - eyeCY - dyn.gazeY * 0.02) / eyeRY;
+        let ey = (v1 - eyeCY - dyn.gazeY * 0.02) / eyeRY;
+        ey += s * ex * -0.30; // almond shear: outer corners sweep up to the temples
         const er = ex * ex + ey * ey;
         if (er < 1) {
-          // Radiant lens: white-hot core, bright iris, luminous rim.
-          b = er < 0.3 ? 1.35 * p.eyeGlow : er < 0.7 ? 1.0 * p.eyeGlow : 0.8 * p.eyeGlow;
+          // White-hot core → bright iris → dark sclera gap → luminous
+          // limbal ring: concentric structure makes the stare radiant.
+          b = er < 0.18 ? 1.6 * p.eyeGlow
+            : er < 0.6 ? 1.05 * p.eyeGlow
+            : er < 0.85 ? 0.55 * p.eyeGlow
+            : 0.9 * p.eyeGlow;
           reg = REGION.EYE;
-        } else if (er < 2.6) {
-          b -= 0.05; // socket shadow
+        } else if (er < 2.8) {
+          b -= 0.07; // socket shadow
         }
 
         // ---- nose: luminous ridge + nostril wings ---------------------
