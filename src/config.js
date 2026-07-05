@@ -33,10 +33,27 @@ const defaults = {
   },
 
   local: {
-    // Preferred Web Speech voices, first match wins.
+    // Preferred Web Speech voices, first match wins. These are system
+    // voices — list yours with speechSynthesis.getVoices() in the
+    // console, or try one instantly via the ?voice= URL param
+    // (?voice=Ralph for depth, ?voice=Trinoids for full retro-robot on
+    // macOS). Deeper voices + low pitch = more ghost.
     preferredVoices: ['Daniel', 'Alex', 'Google UK English Male', 'Microsoft David'],
-    rate: 0.95,
-    pitch: 0.72,
+    rate: 0.9,
+    pitch: 0.55, // 0..2 — low pitch does most of the "entity" work
+  },
+
+  // Post-processing for provider audio that plays through Web Audio
+  // (the Azure Voice Live path): a ring-modulator + band-shaping chain
+  // that makes any neural voice sound like a transmission from inside
+  // the machine. No effect on Web Speech voices (the browser gives us
+  // no audio node for those).
+  voiceFx: {
+    enabled: true,
+    ringHz: 30, // classic robot flutter (Daleks used ~30 Hz)
+    ringDepth: 0.35, // 0 = clean voice, 1 = full metallic
+    lowpassHz: 3400, // telephone-band ceiling
+    highpassHz: 220, // cut the warm lows — ghosts have no chest
   },
 
   face: {

@@ -9,7 +9,14 @@ import { runDemo, stopDemo } from './demo/demo.js';
 
 const $ = (sel) => document.querySelector(sel);
 
-const face = new CodefallFace($('#stage'));
+// ?voice=Ralph — try any installed Web Speech voice by name without
+// touching config (list them: speechSynthesis.getVoices() in console).
+const urlParams = new URLSearchParams(location.search);
+const voiceParam = urlParams.get('voice');
+const face = new CodefallFace(
+  $('#stage'),
+  voiceParam ? { local: { preferredVoices: [voiceParam] } } : {}
+);
 window.codefall = face; // console access for tinkerers
 window.CodefallFace = CodefallFace; // embedding API
 
@@ -228,7 +235,6 @@ document.addEventListener('click', unlock, { once: false, passive: true });
 // ---- URL params: deep-link a pose (handy for screenshots / GIFs) --------
 // ?emotion=anger        — start in an emotion
 // ?pose=talk            — animate the mouth continuously without audio
-const urlParams = new URLSearchParams(location.search);
 const startEmotion = urlParams.get('emotion');
 if (startEmotion) face.setEmotion(startEmotion);
 const startTheme = urlParams.get('theme');

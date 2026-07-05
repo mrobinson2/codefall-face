@@ -24,6 +24,7 @@
  */
 
 import { VoiceAdapter } from './adapter.js';
+import { attachGhostFx } from './voice-fx.js';
 
 const OUT_RATE = 24000;
 
@@ -126,8 +127,13 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
     if (this._audioCtx) return;
     this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     this._gain = this._audioCtx.createGain();
-    this._gain.connect(this._audioCtx.destination);
-    this.emit('audionode', { ctx: this._audioCtx, node: this._gain });
+    let tail = this._gain;
+    const fx = this.config.voiceFx;
+    if (fx?.enabled) tail = attachGhostFx(this._audioCtx, this._gain, fx);
+    tail.connect(this._audioCtx.destination);
+    // The speech engine analyses the post-FX signal, so the mouth
+    // tracks what the human actually hears.
+    this.emit('audionode', { ctx: this._audioCtx, node: tail });
   }
 
   _handle(raw) {
