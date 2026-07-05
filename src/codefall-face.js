@@ -104,7 +104,10 @@ export class CodefallFace extends EventTarget {
   /** Conversational turn: send text, get a spoken reply (if the provider has a brain). */
   async ask(text) {
     await this.ready;
-    this.emit('transcript', { role: 'user', text, final: true });
+    // via:'api' marks this as an already-routed turn — distinguishes it
+    // from adapter STT transcripts so UI glue doesn't re-route it into
+    // ask() again (that loop hard-locks the page).
+    this.emit('transcript', { role: 'user', text, final: true, via: 'api' });
     if (this.adapter.name === 'lacy') return this.adapter.converse(text);
     if (this.adapter.name === 'azure') {
       this._setState('thinking');

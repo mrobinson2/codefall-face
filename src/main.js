@@ -34,7 +34,7 @@ face.on('provider', ({ name }) => {
 // ---- transcript -------------------------------------------------------
 const transcriptEl = $('#transcript');
 let liveLine = null;
-face.on('transcript', ({ role, text, final }) => {
+face.on('transcript', ({ role, text, final, via }) => {
   if (!final && role === 'agent') {
     if (!liveLine) {
       liveLine = document.createElement('div');
@@ -52,9 +52,10 @@ face.on('transcript', ({ role, text, final }) => {
       div.textContent = text;
       transcriptEl.appendChild(div);
     }
-    if (role === 'user' && final && face.adapter?.name === 'local') {
-      // Local STT has no brain wired — hand the words to ask() anyway
-      // so the canned persona answers.
+    if (role === 'user' && final && via !== 'api' && face.adapter?.name === 'local') {
+      // Local STT (microphone) has no brain wired — hand the words to
+      // ask() so the canned persona answers. Transcripts tagged via:'api'
+      // ALREADY came from ask(); re-routing them would loop forever.
       face.ask(text);
     }
   }
@@ -175,10 +176,11 @@ dragHandle.addEventListener('pointerdown', (e) => {
   dragHandle.addEventListener('pointerup', up);
 });
 
-// Restore dock preference; re-clamp free positions on resize.
+// Restore dock preference (default: lower-right, keeping the face clear);
+// re-clamp free positions on resize.
 try {
   const saved = JSON.parse(localStorage.getItem('codefall-dock') || 'null');
-  if (saved?.dock && isDesktop()) applyDock(saved.dock, saved.pos);
+  if (isDesktop()) applyDock(saved?.dock || 'right', saved?.pos);
 } catch { /* fresh start */ }
 const dockParam = new URLSearchParams(location.search).get('dock');
 if (dockParam && isDesktop()) applyDock(dockParam);
