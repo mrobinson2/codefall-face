@@ -59,7 +59,7 @@ export class FaceModel {
     const out = [];
     for (const s of [-1, 1]) {
       out.push({
-        x: this.cx + s * 0.28 * this.scale + dyn.gazeX * 0.02 * this.scale,
+        x: this.cx + s * 0.26 * this.scale + dyn.gazeX * 0.02 * this.scale,
         y: this.cy + (-0.16 + dyn.gazeY * 0.02) * this.scale,
         r: 0.13 * this.scale * p.eyeWidth,
         glow: p.eyeGlow * dyn.blink,
@@ -88,12 +88,14 @@ export class FaceModel {
     const lum = p.luminance * (0.9 + 0.1 * coh);
 
     // ---- head shape parameters -------------------------------------
-    const skx = 0.70, sky = 0.62, skyc = -0.32; // skull ellipse
-    const vCheek = -0.15, vCorner = 0.46;
-    const vChin = 0.96 + dyn.mouthOpen * 0.05; // jaw drops as mouth opens
-    const wCheek = 0.66;
-    const wCorner = 0.48 + 0.10 * p.jawSharp; // sharper = squarer
-    const wChin = 0.17;
+    // Narrow elongated oval tapering to a pointed chin (the "borrowed
+    // face" reference) — jawSharp still squares the corner for anger.
+    const skx = 0.62, sky = 0.64, skyc = -0.32; // skull ellipse
+    const vCheek = -0.15, vCorner = 0.44;
+    const vChin = 1.0 + dyn.mouthOpen * 0.05; // jaw drops as mouth opens
+    const wCheek = 0.60;
+    const wCorner = 0.42 + 0.08 * p.jawSharp; // sharper = squarer
+    const wChin = 0.08;
     const taperPow = 1.3 + 1.1 * p.jawSharp; // higher = harder jaw angle
 
     // ---- feature parameters ----------------------------------------
@@ -105,7 +107,7 @@ export class FaceModel {
 
     const open = dyn.mouthOpen;
     const vM = 0.55 + open * 0.03;
-    const halfW = Math.max(0.06, 0.24 * p.mouthWidth * (1 + dyn.mouthWide * 0.25));
+    const halfW = Math.max(0.06, 0.22 * p.mouthWidth * (1 + dyn.mouthWide * 0.25));
     const lipT = 0.032;
     const lipBright = 0.9 + 0.4 * (p.mouthTension * 0.6 + dyn.tension * 0.4);
 
@@ -137,45 +139,52 @@ export class FaceModel {
 
         sdf[i] = d;
 
-        if (d > 0.06) { // outside the head — background rain territory
-          bright[i] = 0;
-          region[i] = REGION.VOID;
+        if (d > 0.06) { // outside the head
+          // Fragmentation aura: the silhouette sheds static pixel
+          // shards into the surrounding dark (denser near the edge).
+          if (d < 0.5 && nz > 0.8) {
+            bright[i] = (0.5 - d) * (0.35 + nz * 0.9) * lum * (0.5 + 0.5 * coh);
+            region[i] = REGION.SHARD;
+          } else {
+            bright[i] = 0;
+            region[i] = REGION.VOID;
+          }
           continue;
         }
 
         // ---- contour band -------------------------------------------
         if (d > -0.045) {
-          const jawPop = v1 > 0.1 ? 0.35 * p.jawSharp : 0.12;
-          bright[i] = (0.6 + jawPop) * lum * coh;
+          const jawPop = v1 > 0.1 ? 0.32 * p.jawSharp : 0.1;
+          bright[i] = (0.68 + jawPop) * lum * coh;
           region[i] = REGION.EDGE;
           continue;
         }
 
-        // ---- interior base ------------------------------------------
-        let b = 0.10 + nz * 0.06 + Math.sin(t * 0.7 + nz * 9) * 0.02;
+        // ---- interior base: near-dark, so contours carry the face ----
+        let b = 0.05 + nz * 0.04 + Math.sin(t * 0.7 + nz * 9) * 0.015;
         let reg = REGION.FACE;
         const au = Math.abs(u0);
         const s = u0 < 0 ? -1 : 1;
 
-        // Forehead sheen / cheekbones / chin pad — facial planes as density
+        // Faint facial planes — kept dim so the line-work dominates
         const fh = u0 * u0 / 0.09 + (v1 + 0.55) * (v1 + 0.55) / 0.06;
-        if (fh < 1) b += 0.06 * (1 - fh);
-        const cbx = au - 0.42, cby = v1 - 0.02;
-        const cb = (cbx * cbx + cby * cby) / (0.17 * 0.17);
-        if (cb < 1) b += 0.15 * (1 - cb);
+        if (fh < 1) b += 0.03 * (1 - fh);
+        const cbx = au - 0.38, cby = v1 - 0.02;
+        const cb = (cbx * cbx + cby * cby) / (0.15 * 0.15);
+        if (cb < 1) b += 0.07 * (1 - cb);
         const ch = (u0 * u0 + (v1 - 0.80) * (v1 - 0.80)) / (0.12 * 0.12);
-        if (ch < 1) b += 0.11 * (1 - ch);
+        if (ch < 1) b += 0.06 * (1 - ch);
 
-        // ---- brows ---------------------------------------------------
-        if (v1 > browV - 0.14 && v1 < browV + 0.16 && au > 0.06 && au < 0.48) {
+        // ---- brows: angular ridges sweeping up toward the temples ----
+        if (v1 > browV - 0.18 && v1 < browV + 0.16 && au > 0.06 && au < 0.48) {
           const innerY = browV - p.browAngle * 0.14 + s * p.asym * 0.05;
-          const outerY = browV + p.browAngle * 0.11 - s * p.asym * 0.03;
+          const outerY = browV - 0.055 + p.browAngle * 0.11 - s * p.asym * 0.03;
           const fx = (au - 0.11) / 0.33; // 0 at inner end, 1 at outer
           if (fx >= 0 && fx <= 1) {
             const by = innerY + (outerY - innerY) * fx;
             const dist = Math.abs(v1 - by);
             if (dist < browThick) {
-              b = Math.max(b, 0.95 * (1 - dist / browThick) + 0.25);
+              b = Math.max(b, 1.05 * (1 - dist / browThick) + 0.3);
               reg = REGION.BROW;
             }
           }
@@ -185,23 +194,24 @@ export class FaceModel {
         const eyeOpenSide =
           p.eyeOpen * dyn.blink * (1 + s * asymT * 0.25);
         const eyeRY = Math.max(0.012, 0.085 * eyeOpenSide);
-        const ex = (u0 - s * 0.28 - dyn.gazeX * 0.02) / eyeRX;
+        const ex = (u0 - s * 0.26 - dyn.gazeX * 0.02) / eyeRX;
         const ey = (v1 - eyeCY - dyn.gazeY * 0.02) / eyeRY;
         const er = ex * ex + ey * ey;
         if (er < 1) {
-          b = er < 0.35 ? 0.95 * p.eyeGlow : 0.75 * p.eyeGlow;
+          // Radiant lens: white-hot core, bright iris, luminous rim.
+          b = er < 0.3 ? 1.35 * p.eyeGlow : er < 0.7 ? 1.0 * p.eyeGlow : 0.8 * p.eyeGlow;
           reg = REGION.EYE;
         } else if (er < 2.6) {
-          b -= 0.06; // socket shadow
+          b -= 0.05; // socket shadow
         }
 
-        // ---- nose ----------------------------------------------------
+        // ---- nose: luminous ridge + nostril wings ---------------------
         if (reg === REGION.FACE) {
           if (au < 0.028 && v1 > -0.06 && v1 < 0.26) {
-            b = Math.max(b, 0.34);
+            b = Math.max(b, 0.55);
             reg = REGION.NOSE;
-          } else if (v1 > 0.24 && v1 < 0.31 && au > 0.04 && au < 0.10) {
-            b = Math.max(b, 0.4);
+          } else if (v1 > 0.24 && v1 < 0.31 && au > 0.04 && au < 0.11) {
+            b = Math.max(b, 0.62);
             reg = REGION.NOSE;
           }
         }

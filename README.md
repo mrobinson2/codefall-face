@@ -13,11 +13,12 @@ static host), open the page, press **DEMO**. No accounts, no keys — the
 face runs on Web Speech and pure canvas.
 
 **Two visual themes**, toggled with the ◐ button (or `?theme=`, or
-`face.setTheme()`): **wintermute** (default) — a monochrome ice-white
-voxel ghost inside a broken neon halo, shedding glyph debris; and
-**codefall** — the classic neon-green matrix phosphor. Both share the
-same procedural face; only palette, glyph vocabulary, halo intensity,
-and rain density change. The ▾ button minimizes the control console.
+`face.setTheme()`): **codefall** (default) — neon-green matrix phosphor,
+radiant lens eyes, contour-line features, the silhouette fragmenting
+into pixel shards; and **wintermute** — a monochrome ice-white voxel
+ghost inside a broken neon halo. Both share the same procedural face;
+only palette, glyph vocabulary, halo intensity, and rain density change.
+The ▾ button minimizes the control console.
 
 ---
 
@@ -173,6 +174,33 @@ face.on('error',      ({ message }) => {});
 
 The console UI in `main.js` is just one consumer of this API — embed the
 face in your own agent dashboard by importing `codefall-face.js` alone.
+
+### Driving the face from an external agent
+
+`face.attachAgentSocket(url)` (or `?agent=wss://host/path` at load)
+connects a JSON WebSocket command channel so any orchestrator — an agent
+gateway, a bot framework, a dashboard — can possess the face remotely:
+
+```jsonc
+// agent → face
+{ "type": "speak", "text": "…", "emotion": "happiness" }
+{ "type": "ask", "text": "…" }            // conversational turn
+{ "type": "emotion", "emotion": "anger" }
+{ "type": "listen", "on": true }
+{ "type": "interrupt" }
+{ "type": "mute", "muted": true }
+
+// face → agent
+{ "type": "hello", "client": "codefall-face", "state": "idle" }
+{ "type": "transcript", "role": "user", "text": "…", "final": true }
+{ "type": "state", "state": "speaking" }
+{ "type": "error", "message": "…" }
+```
+
+The channel auto-reconnects. Human speech (STT transcripts) flows out to
+the agent; the agent's replies flow back in as `speak` commands — the
+face becomes a remote body for whatever intelligence is on the other end
+of the socket.
 
 Handy URL params for screenshots/GIFs: `?emotion=anger`, `?pose=talk`.
 

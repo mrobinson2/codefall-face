@@ -90,6 +90,27 @@ body {
   display: block;
 }
 
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.hud-corner {
+  position: absolute;
+  top: 48px;
+  font-size: 9px;
+  line-height: 1.7;
+  letter-spacing: 0.18em;
+  color: var(--green-dim);
+  opacity: 0.65;
+  text-shadow: 0 0 6px var(--green-glow);
+  user-select: none;
+}
+.hud-corner.tl { left: 16px; }
+.hud-corner.tr { right: 16px; text-align: right; }
+@media (max-width: 600px) { .hud-corner { display: none; } }
+
 /* ---------- CRT overlay: scanlines + shimmer band + vignette ---------- */
 #crt {
   position: fixed;

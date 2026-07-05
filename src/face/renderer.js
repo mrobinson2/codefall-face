@@ -153,6 +153,10 @@ export class CodefallRenderer {
       case REGION.MOUTH:
       case REGION.MOUTH_INNER:
         return CHAR_INDEX.get(MOUTH[(Math.random() * MOUTH.length) | 0]);
+      case REGION.SHARD: {
+        const bi = Math.min(BLOCKS.length - 1, (intensity * BLOCKS.length * 1.4) | 0);
+        return CHAR_INDEX.get(BLOCKS[bi]);
+      }
       case REGION.VOID:
         return CHAR_INDEX.get(rainChar);
       default: {
@@ -244,7 +248,6 @@ export class CodefallRenderer {
 
     const rainDim = this.theme.rainDim;
     this._edgeCells.length = 0;
-    const lowerRow = rows * 0.52;
 
     let i = 0;
     for (let r = 0; r < rows; r++) {
@@ -252,7 +255,7 @@ export class CodefallRenderer {
         let b = this.bright[i];
         const reg = this.region[i];
         const col = this.rain[c];
-        if (reg === REGION.EDGE && r > lowerRow) this._edgeCells.push(i);
+        if (reg === REGION.EDGE) this._edgeCells.push(i);
 
         // Rain contribution
         const dHead = col.y - r;
@@ -311,9 +314,9 @@ export class CodefallRenderer {
     if (dyn.blink > 0.15) {
       ctx.globalCompositeOperation = 'lighter';
       for (const eye of this.model.eyePositions(p, dyn)) {
-        const rad = eye.r * 1.6;
+        const rad = eye.r * 1.9;
         const g = ctx.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, rad);
-        const a = Math.min(0.3, 0.11 * eye.glow * dyn.coherence);
+        const a = Math.min(0.42, 0.16 * eye.glow * dyn.coherence);
         g.addColorStop(0, `hsla(${glowHue}, ${glowSat}%, 72%, ${a})`);
         g.addColorStop(1, `hsla(${glowHue}, ${glowSat}%, 50%, 0)`);
         ctx.fillStyle = g;
@@ -427,10 +430,12 @@ export class CodefallRenderer {
       this._debrisAcc -= 1;
       const idx = this._edgeCells[(Math.random() * this._edgeCells.length) | 0];
       const c = idx % this.cols, r = (idx / this.cols) | 0;
+      const px = c * this.cellW;
       this._debris.push({
-        x: c * this.cellW, y: r * this.cellH,
-        vx: (Math.random() - 0.5) * 14,
-        vy: 8 + Math.random() * 22,
+        x: px, y: r * this.cellH,
+        // Shards drift outward from the silhouette, then sink.
+        vx: (px < this.model.cx ? -1 : 1) * (4 + Math.random() * 16),
+        vy: 2 + Math.random() * 16,
         life: 1, decay: 0.4 + Math.random() * 0.5,
         gi: CHAR_INDEX.get(DEBRIS[(Math.random() * DEBRIS.length) | 0]),
         size: 0.5 + Math.random() * 0.6,

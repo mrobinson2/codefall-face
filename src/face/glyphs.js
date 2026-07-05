@@ -40,6 +40,7 @@ export const REGION = {
   NOSE: 5,
   MOUTH: 6,
   MOUTH_INNER: 7,
+  SHARD: 8, // fragmentation aura — pixel blocks scattered off the silhouette
 };
 
 // Full atlas charset: union of everything above, deduplicated.
@@ -58,7 +59,7 @@ export const TIERS = 6;
  *                flesh, faint cold cyan), after the Neuromancer AI.
  */
 export const THEMES = {
-  codefall: { hue: 140, sat: 1.0, blocky: false, rainDim: 1.0, ring: 0.55 },
+  codefall: { hue: 140, sat: 1.0, blocky: false, rainDim: 1.0, ring: 0.22 },
   wintermute: { hue: 204, sat: 0.13, blocky: true, rainDim: 0.7, ring: 1.0 },
 };
 

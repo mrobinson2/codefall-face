@@ -167,6 +167,12 @@ const startEmotion = urlParams.get('emotion');
 if (startEmotion) face.setEmotion(startEmotion);
 const startTheme = urlParams.get('theme');
 if (startTheme) face.setTheme(startTheme);
+// ?agent=wss://host/path — connect the agent control channel on boot
+const agentUrl = urlParams.get('agent');
+if (agentUrl) {
+  face.attachAgentSocket(agentUrl);
+  debugLog(`agent channel → ${agentUrl}`);
+}
 if (urlParams.get('pose') === 'talk') {
   face.engine.setSpeaking(true);
   setInterval(() => face.engine.textPulse(3 + Math.random() * 6), 160);

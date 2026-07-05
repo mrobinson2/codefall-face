@@ -168,6 +168,65 @@ export class CodefallFace extends EventTarget {
     this.emit('theme', { theme: name });
   }
 
+  /**
+   * Agent control channel: connect a JSON WebSocket so an external
+   * orchestrator (a Hermes agent, a dashboard, anything) can drive the
+   * face remotely. Inbound commands:
+   *   { type:'speak', text, emotion? }   { type:'ask', text }
+   *   { type:'emotion', emotion }        { type:'listen', on }
+   *   { type:'interrupt' }               { type:'mute', muted }
+   *   { type:'theme', theme }
+   * Outbound events (so the agent hears the human and sees face state):
+   *   { type:'transcript', role, text, final }
+   *   { type:'state', state }  { type:'emotion', emotion }
+   *   { type:'error', message }
+   */
+  attachAgentSocket(url, { reconnect = true } = {}) {
+    if (!this._agentEventsWired) {
+      this._agentEventsWired = true;
+      for (const t of ['transcript', 'state', 'emotion', 'error']) {
+        this.addEventListener(t, (e) => {
+          const ws = this._agentWs;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: t, ...e.detail }));
+          }
+        });
+      }
+    }
+    const connect = () => {
+      const ws = new WebSocket(url);
+      this._agentWs = ws;
+      ws.onopen = () =>
+        ws.send(JSON.stringify({ type: 'hello', client: 'codefall-face', state: this.state }));
+      ws.onmessage = (e) => {
+        let m;
+        try { m = JSON.parse(e.data); } catch { return; }
+        switch (m.type) {
+          case 'speak': this.speak(m.text, m.emotion || null); break;
+          case 'ask': this.ask(m.text); break;
+          case 'emotion': this.setEmotion(m.emotion); break;
+          case 'listen': m.on ? this.startListening() : this.stopListening(); break;
+          case 'interrupt': this.interrupt(); break;
+          case 'mute': this.setMuted(!!m.muted); break;
+          case 'theme': this.setTheme(m.theme); break;
+        }
+      };
+      ws.onclose = () => {
+        if (reconnect && this._agentWs === ws) {
+          setTimeout(connect, 2000 + Math.random() * 1000);
+        }
+      };
+      ws.onerror = () => { /* onclose handles retry */ };
+    };
+    connect();
+  }
+
+  detachAgentSocket() {
+    const ws = this._agentWs;
+    this._agentWs = null;
+    if (ws) { try { ws.close(); } catch { /* ok */ } }
+  }
+
   /** Switch provider at runtime: 'azure' | 'lacy' | 'local'. */
   async setProvider(name) {
     if (this.adapter) this.adapter.destroy();
