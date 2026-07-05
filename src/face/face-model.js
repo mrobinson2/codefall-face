@@ -234,6 +234,10 @@ export class FaceModel {
           }
         }
 
+        // Directional key light from the viewer's left gives the head
+        // sculptural volume (eyes stay self-luminous).
+        if (reg !== REGION.EYE) b *= 1 - u0 * 0.16;
+
         bright[i] = b * lum * (reg === REGION.EYE ? 1 : coh * 0.85 + 0.15);
         region[i] = reg;
       }

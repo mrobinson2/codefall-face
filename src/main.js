@@ -108,6 +108,23 @@ $('#demo').onclick = () => runDemo(face, {
   onBeat: (b) => debugLog(`demo beat: ${b.emotion}`),
 });
 
+$('#theme-toggle').onclick = () => {
+  face.setTheme(face.theme === 'wintermute' ? 'codefall' : 'wintermute');
+  debugLog(`theme → ${face.theme}`);
+};
+
+// ---- console minimize -------------------------------------------------
+const consoleEl = $('#console');
+const consoleToggle = $('#console-toggle');
+function setCollapsed(collapsed) {
+  consoleEl.classList.toggle('collapsed', collapsed);
+  consoleToggle.textContent = collapsed ? '▴' : '▾';
+  consoleToggle.title = collapsed ? 'Expand panel' : 'Minimize panel';
+  localStorage.setItem('codefall-console', collapsed ? 'min' : 'open');
+}
+consoleToggle.onclick = () => setCollapsed(!consoleEl.classList.contains('collapsed'));
+if (localStorage.getItem('codefall-console') === 'min') setCollapsed(true);
+
 // ---- debug panel ------------------------------------------------------------
 const debugEl = $('#debug');
 const debugLines = $('#debug-lines');
@@ -148,6 +165,8 @@ document.addEventListener('click', unlock, { once: false, passive: true });
 const urlParams = new URLSearchParams(location.search);
 const startEmotion = urlParams.get('emotion');
 if (startEmotion) face.setEmotion(startEmotion);
+const startTheme = urlParams.get('theme');
+if (startTheme) face.setTheme(startTheme);
 if (urlParams.get('pose') === 'talk') {
   face.engine.setSpeaking(true);
   setInterval(() => face.engine.textPulse(3 + Math.random() * 6), 160);

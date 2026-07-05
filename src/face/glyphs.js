@@ -25,6 +25,11 @@ export const EYE = '◉@0OØ0';
 // Mouth: horizontal tension marks and static.
 export const MOUTH = '-=~≈#=';
 
+// Voxel blocks (wintermute theme flesh + disintegration debris),
+// ordered dim → bright so intensity can index them.
+export const BLOCKS = '·▫▪□■';
+export const DEBRIS = '▪▫□·';
+
 // Region ids written into the region buffer by the face model.
 export const REGION = {
   VOID: 0, // outside the head — background rain only
@@ -39,7 +44,7 @@ export const REGION = {
 
 // Full atlas charset: union of everything above, deduplicated.
 export const ATLAS_CHARS = [
-  ...new Set((RAMP + RAIN + EDGE.join('') + EYE + MOUTH).split('')),
+  ...new Set((RAMP + RAIN + EDGE.join('') + EYE + MOUTH + BLOCKS + DEBRIS).split('')),
 ];
 
 export const CHAR_INDEX = new Map(ATLAS_CHARS.map((c, i) => [c, i]));
@@ -47,12 +52,22 @@ export const CHAR_INDEX = new Map(ATLAS_CHARS.map((c, i) => [c, i]));
 export const TIERS = 6;
 
 /**
- * Phosphor palette. hueShift lets emotions pull the green toward acid
- * (anger) or cold sea-glass (sadness) without abandoning the identity.
+ * Visual themes.
+ *   codefall   — the classic neon-green matrix phosphor.
+ *   wintermute — monochrome ice-white voxel ghost (halo ring, block
+ *                flesh, faint cold cyan), after the Neuromancer AI.
+ */
+export const THEMES = {
+  codefall: { hue: 140, sat: 1.0, blocky: false, rainDim: 1.0, ring: 0.55 },
+  wintermute: { hue: 204, sat: 0.13, blocky: true, rainDim: 0.7, ring: 1.0 },
+};
+
+/**
+ * Phosphor palette for a base hue. Emotion hueShift nudges it (acid for
+ * anger, cold for sadness) without abandoning the theme's identity.
  * Returns TIERS css colors, dim → near-white bloom.
  */
-export function makeTiers(hueShift = 0, satScale = 1) {
-  const h = 140 + hueShift;
+export function makeTiers(hue = 140, satScale = 1) {
   const stops = [
     [70, 14],
     [85, 24],
@@ -61,7 +76,7 @@ export function makeTiers(hueShift = 0, satScale = 1) {
     [90, 66],
     [55, 88],
   ];
-  return stops.map(([s, l]) => `hsl(${h}, ${Math.min(100, s * satScale)}%, ${l}%)`);
+  return stops.map(([s, l]) => `hsl(${hue}, ${Math.min(100, s * satScale)}%, ${l}%)`);
 }
 
 /** Map a 0..1 intensity to an atlas tier index. */

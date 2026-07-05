@@ -12,6 +12,23 @@
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, "Courier New", monospace;
 }
 
+/* Ice-white Wintermute theme: same console, colder blood. */
+body[data-theme="wintermute"] {
+  --green: #e6f1f7;
+  --green-dim: #7e95a3;
+  --green-faint: #22303a;
+  --green-glow: rgba(215, 240, 255, 0.30);
+  --panel: rgba(6, 10, 14, 0.82);
+}
+body[data-theme="wintermute"] .btn.accent { color: #bfe6ff; }
+body[data-theme="wintermute"] #say-input { background: rgba(10, 16, 22, 0.6); }
+body[data-theme="wintermute"] .btn:active,
+body[data-theme="wintermute"] .btn.active,
+body[data-theme="wintermute"] #console-toggle:active {
+  background: rgba(200, 235, 255, 0.14);
+}
+body[data-theme="wintermute"] #status[data-state="listening"] { color: #cfeaff; }
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
   height: 100%;
@@ -117,15 +134,46 @@ body {
 
 /* ---------- console ---------- */
 #console {
+  position: relative;
   z-index: 3;
   background: var(--panel);
   border-top: 1px solid var(--green-faint);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  padding: 8px 44px calc(8px + env(safe-area-inset-bottom)) 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+#console-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid var(--green-faint);
+  border-radius: 3px;
+  color: var(--green-dim);
+  font-family: var(--mono);
+  font-size: 14px;
+  cursor: pointer;
+  touch-action: manipulation;
+  z-index: 1;
+}
+#console-toggle:active { background: rgba(0, 255, 102, 0.12); }
+
+/* Minimized: everything hides except the expand tab. */
+#console.collapsed { padding: 6px 44px 6px 10px; min-height: 44px; }
+#console.collapsed > :not(#console-toggle) { display: none; }
+@media (min-width: 900px) {
+  #console.collapsed {
+    width: auto;
+    left: auto;
+    right: 18px;
+    transform: none;
+  }
 }
 
 #emotions {

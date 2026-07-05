@@ -18,8 +18,8 @@
 
 import {
   ATLAS_CHARS, CHAR_INDEX, TIERS, REGION,
-  RAMP, RAIN, EDGE, EYE, MOUTH,
-  makeTiers, tierFor,
+  RAMP, RAIN, EDGE, EYE, MOUTH, BLOCKS, DEBRIS,
+  THEMES, makeTiers, tierFor,
 } from './glyphs.js';
 
 const QUALITY = {
@@ -35,7 +35,11 @@ export class CodefallRenderer {
     this.model = faceModel;
     this.reducedMotion = !!opts.reducedMotion;
     this.qualityName = opts.quality || 'auto';
+    this.theme = THEMES[opts.theme] || THEMES.codefall;
     this.hueShift = 0;
+    this._debris = [];
+    this._debrisAcc = 0;
+    this._edgeCells = [];
     this.fps = 0;
     this._fpsAcc = 0;
     this._fpsN = 0;
@@ -107,9 +111,14 @@ export class CodefallRenderer {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
+  setTheme(name) {
+    this.theme = THEMES[name] || THEMES.codefall;
+    this.buildAtlas(this.hueShift);
+  }
+
   buildAtlas(hueShift) {
     this.hueShift = hueShift;
-    const tiers = makeTiers(hueShift);
+    const tiers = makeTiers(this.theme.hue + hueShift * 0.6, this.theme.sat);
     const cw = Math.ceil(this.cellW * this.dpr);
     const chh = Math.ceil(this.cellH * this.dpr);
     const atlas = document.createElement('canvas');
@@ -149,6 +158,11 @@ export class CodefallRenderer {
       default: {
         // Face flesh: mix brightness-ramp with datastream characters,
         // so the face reads as *made of* code, not shaded with dots.
+        // Blocky themes lean on voxel tiles for the mosaic-head look.
+        if (this.theme.blocky && Math.random() < 0.55) {
+          const bi = Math.min(BLOCKS.length - 1, (intensity * BLOCKS.length) | 0);
+          return CHAR_INDEX.get(BLOCKS[bi]);
+        }
         if (Math.random() < 0.35) {
           return CHAR_INDEX.get(RAIN[(Math.random() * RAIN.length) | 0]);
         }
@@ -208,6 +222,9 @@ export class CodefallRenderer {
     }
     ctx.fillRect(0, 0, this.w, this.h);
 
+    // ---- halo ring, under-pass (glyphs draw over it, occluding) --------
+    if (this.theme.ring > 0) this._drawRing(p, dyn, state, false);
+
     // ---- rain update ----------------------------------------------------
     const rainMul = this.reducedMotion ? 0.06 : p.rainSpeed;
     for (const col of this.rain) {
@@ -225,12 +242,17 @@ export class CodefallRenderer {
       (state.mode === 'thinking' ? 0.1 : 0);
     const flick = this.reducedMotion ? 0 : p.flicker;
 
+    const rainDim = this.theme.rainDim;
+    this._edgeCells.length = 0;
+    const lowerRow = rows * 0.52;
+
     let i = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++, i++) {
         let b = this.bright[i];
         const reg = this.region[i];
         const col = this.rain[c];
+        if (reg === REGION.EDGE && r > lowerRow) this._edgeCells.push(i);
 
         // Rain contribution
         const dHead = col.y - r;
@@ -238,7 +260,7 @@ export class CodefallRenderer {
         if (dHead >= 0 && dHead < col.len) {
           const trail = 1 - dHead / col.len;
           if (reg === REGION.VOID) {
-            b = Math.max(b, (dHead < 1 ? 0.9 : trail * 0.42) * p.rainDensity);
+            b = Math.max(b, (dHead < 1 ? 0.9 : trail * 0.42) * p.rainDensity * rainDim);
             inRain = true;
           } else {
             // Rain passing *through* the face perturbs it
@@ -280,20 +302,28 @@ export class CodefallRenderer {
       }
     }
 
+    // ---- disintegration debris: the face crumbles off its lower edge ---
+    this._updateDebris(dt, p, dyn, ctx);
+
     // ---- eye glow pass -----------------------------------------------
+    const glowHue = this.theme.hue + p.hueShift;
+    const glowSat = Math.round(this.theme.sat * 100);
     if (dyn.blink > 0.15) {
       ctx.globalCompositeOperation = 'lighter';
       for (const eye of this.model.eyePositions(p, dyn)) {
         const rad = eye.r * 1.6;
         const g = ctx.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, rad);
         const a = Math.min(0.3, 0.11 * eye.glow * dyn.coherence);
-        g.addColorStop(0, `hsla(${140 + p.hueShift}, 100%, 68%, ${a})`);
-        g.addColorStop(1, 'hsla(140, 100%, 50%, 0)');
+        g.addColorStop(0, `hsla(${glowHue}, ${glowSat}%, 72%, ${a})`);
+        g.addColorStop(1, `hsla(${glowHue}, ${glowSat}%, 50%, 0)`);
         ctx.fillStyle = g;
         ctx.fillRect(eye.x - rad, eye.y - rad, rad * 2, rad * 2);
       }
       ctx.globalCompositeOperation = 'source-over';
     }
+
+    // ---- halo ring, bright core over the glyphs -------------------------
+    if (this.theme.ring > 0) this._drawRing(p, dyn, state, true);
 
     // ---- glitch / tear pass --------------------------------------------
     if (!this.reducedMotion) {
@@ -333,5 +363,95 @@ export class CodefallRenderer {
       this.fps = Math.round(this._fpsN / this._fpsAcc);
       this._fpsAcc = 0; this._fpsN = 0;
     }
+  }
+
+  /**
+   * The halo: a broken neon ring encircling the head (Wintermute's
+   * portal). Under-pass lays a wide dim annulus the glyphs occlude;
+   * over-pass strokes rotating bright arc segments that flicker and
+   * surge with speech energy.
+   */
+  _drawRing(p, dyn, state, over) {
+    const ctx = this.ctx;
+    const cx = this.model.cx;
+    const cy = this.model.cy + 0.02 * this.model.scale;
+    // Fit the halo inside the stage even on short viewports.
+    const R = Math.min(1.06 * this.model.scale, this.model.cy - 8);
+    const t = this._time;
+    const hue = this.theme.hue + p.hueShift;
+    const sat = Math.round(this.theme.sat * 100);
+    const energy = 0.55 + dyn.energy * 0.5 + (state.mode === 'speaking' ? 0.15 : 0);
+    const strength = this.theme.ring * dyn.coherence * energy;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    if (!over) {
+      // Wide soft annulus behind everything.
+      ctx.strokeStyle = `hsla(${hue}, ${sat}%, 65%, ${(0.10 * strength).toFixed(3)})`;
+      ctx.lineWidth = R * 0.10;
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = `hsla(${hue}, ${sat}%, 75%, ${(0.14 * strength).toFixed(3)})`;
+      ctx.lineWidth = R * 0.035;
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      // Thin bright cores: one long rotating arc, one short counter-arc.
+      const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
+      const useBlur = this.detectQuality() !== 'low' && !this.reducedMotion;
+      if (useBlur) {
+        ctx.shadowBlur = 16;
+        ctx.shadowColor = `hsla(${hue}, ${sat}%, 70%, 0.8)`;
+      }
+      const a0 = this.reducedMotion ? -Math.PI / 2 : t * 0.22;
+      ctx.strokeStyle = `hsla(${hue}, ${sat}%, 82%, ${(0.55 * strength * flick).toFixed(3)})`;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(cx, cy, R, a0, a0 + Math.PI * 1.62); ctx.stroke();
+
+      const b0 = -t * 0.13 + 2.1;
+      ctx.strokeStyle = `hsla(${hue}, ${sat}%, 88%, ${(0.4 * strength * flick).toFixed(3)})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(cx, cy, R * 1.012, b0, b0 + Math.PI * 0.4); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Disintegration: glyph tiles detach from the lower face contour and
+   * fall away, fading. Spawn rate rises with churn and with coherence
+   * loss, so interruptions visibly shed pieces of the face.
+   */
+  _updateDebris(dt, p, dyn, ctx) {
+    if (this.reducedMotion) return;
+    const cap = 80;
+    this._debrisAcc += dt * (5 + p.churn * 22 + (1 - dyn.coherence) * 55);
+    while (this._debrisAcc >= 1 && this._debris.length < cap && this._edgeCells.length) {
+      this._debrisAcc -= 1;
+      const idx = this._edgeCells[(Math.random() * this._edgeCells.length) | 0];
+      const c = idx % this.cols, r = (idx / this.cols) | 0;
+      this._debris.push({
+        x: c * this.cellW, y: r * this.cellH,
+        vx: (Math.random() - 0.5) * 14,
+        vy: 8 + Math.random() * 22,
+        life: 1, decay: 0.4 + Math.random() * 0.5,
+        gi: CHAR_INDEX.get(DEBRIS[(Math.random() * DEBRIS.length) | 0]),
+        size: 0.5 + Math.random() * 0.6,
+      });
+    }
+    if (!this._debris.length) return;
+    for (let k = this._debris.length - 1; k >= 0; k--) {
+      const d = this._debris[k];
+      d.life -= d.decay * dt;
+      if (d.life <= 0) { this._debris.splice(k, 1); continue; }
+      d.vy += 26 * dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      const tier = Math.min(TIERS - 1, 1 + ((d.life * 3) | 0));
+      ctx.globalAlpha = Math.min(0.8, d.life);
+      ctx.drawImage(
+        this.atlas,
+        d.gi * this.atlasCW, tier * this.atlasCH, this.atlasCW, this.atlasCH,
+        d.x, d.y, this.cellW * d.size, this.cellH * d.size
+      );
+    }
+    ctx.globalAlpha = 1;
   }
 }

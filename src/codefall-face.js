@@ -58,7 +58,10 @@ export class CodefallFace extends EventTarget {
     this.renderer = new CodefallRenderer(this.canvas, this.model, {
       quality: this.config.face.quality,
       reducedMotion: this.reducedMotion,
+      theme: this.config.face.theme,
     });
+    this.theme = this.config.face.theme;
+    document.body.dataset.theme = this.theme;
     this.engine = new SpeechEngine();
 
     // ---- expressive state ----------------------------------------------
@@ -155,6 +158,14 @@ export class CodefallFace extends EventTarget {
   setMuted(m) {
     this.muted = m;
     if (this.adapter) this.adapter.setMuted(m);
+  }
+
+  /** Switch visual theme: 'codefall' | 'wintermute'. */
+  setTheme(name) {
+    this.theme = name;
+    this.renderer.setTheme(name);
+    document.body.dataset.theme = name;
+    this.emit('theme', { theme: name });
   }
 
   /** Switch provider at runtime: 'azure' | 'lacy' | 'local'. */
