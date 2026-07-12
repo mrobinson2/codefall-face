@@ -30,6 +30,31 @@ export const MOUTH = '-=~≈#=';
 export const BLOCKS = '·▫▪□■';
 export const DEBRIS = '▪▫□·';
 
+export const TILES_WIDE = '▪■□';
+export const TILES_FINE = '·▫▪';
+export const SEAMS = '¦—/\\\\';
+export const MACHINE = '0OØ◉#';
+
+export const MATERIAL = {
+  NONE: 0,
+  TILE: 1,
+  FINE: 2,
+  SEAM: 3,
+  APERTURE: 4,
+  MACHINE: 5,
+  LOOSE: 6,
+};
+
+export function wintermuteGlyphFor(material, intensity, seed) {
+  const vocab = material === MATERIAL.FINE ? TILES_FINE
+    : material === MATERIAL.SEAM ? SEAMS
+      : material === MATERIAL.APERTURE || material === MATERIAL.MACHINE ? MACHINE
+        : TILES_WIDE;
+  const lightBias = Math.min(vocab.length - 1, Math.floor(intensity * vocab.length));
+  const jitter = Math.floor(seed * vocab.length) % vocab.length;
+  return vocab[(lightBias + jitter) % vocab.length];
+}
+
 // Region ids written into the region buffer by the face model.
 export const REGION = {
   VOID: 0, // outside the head — background rain only
@@ -45,7 +70,8 @@ export const REGION = {
 
 // Full atlas charset: union of everything above, deduplicated.
 export const ATLAS_CHARS = [
-  ...new Set((RAMP + RAIN + EDGE.join('') + EYE + MOUTH + BLOCKS + DEBRIS).split('')),
+  ...new Set((RAMP + RAIN + EDGE.join('') + EYE + MOUTH + BLOCKS + DEBRIS
+    + TILES_WIDE + TILES_FINE + SEAMS + MACHINE).split('')),
 ];
 
 export const CHAR_INDEX = new Map(ATLAS_CHARS.map((c, i) => [c, i]));
@@ -59,8 +85,14 @@ export const TIERS = 6;
  *                flesh, faint cold cyan), after the Neuromancer AI.
  */
 export const THEMES = {
-  codefall: { hue: 140, sat: 1.0, blocky: false, rainDim: 1.0, ring: 0.22 },
-  wintermute: { hue: 204, sat: 0.13, blocky: true, rainDim: 0.7, ring: 1.0 },
+  codefall: {
+    name: 'codefall', hue: 140, sat: 1.0, blocky: false,
+    rainDim: 1.0, ring: 0.22, detail: 0.45,
+  },
+  wintermute: {
+    name: 'wintermute', hue: 204, sat: 0.13, blocky: true,
+    rainDim: 0.42, ring: 1.0, detail: 1.0,
+  },
 };
 
 /**
