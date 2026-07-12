@@ -32,7 +32,7 @@ export const DEBRIS = '▪▫□·';
 
 export const TILES_WIDE = '▪■□';
 export const TILES_FINE = '·▫▪';
-export const SEAMS = '¦—/\\\\';
+export const SEAMS = '¦—/\\';
 export const MACHINE = '0OØ◉#';
 
 export const MATERIAL = {

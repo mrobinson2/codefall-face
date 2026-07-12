@@ -11,6 +11,11 @@ test('every wintermute material glyph exists in the atlas', () => {
   }
 });
 
+test('seams contains exactly four distinct directional glyphs', () => {
+  assert.equal(SEAMS, '¦—/\\');
+  assert.equal(SEAMS.length, 4);
+});
+
 test('material selection is deterministic for a fixed seed', () => {
   assert.equal(
     wintermuteGlyphFor(MATERIAL.FINE, 0.7, 0.42),
@@ -19,5 +24,5 @@ test('material selection is deterministic for a fixed seed', () => {
 });
 
 test('aperture material selects a dark machine glyph', () => {
-  assert.ok(MACHINE.includes(wintermuteGlyphFor(MATERIAL.MACHINE, 0.8, 0.5)));
+  assert.ok(MACHINE.includes(wintermuteGlyphFor(MATERIAL.APERTURE, 0.8, 0.5)));
 });
