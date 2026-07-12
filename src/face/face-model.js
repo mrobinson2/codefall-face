@@ -2,23 +2,57 @@
  * Face Model — procedural facial topology as scalar fields.
  *
  * The face is never drawn as an image. Each frame this model evaluates,
- * per grid cell, a signed-distance-like head function (skull ellipse +
- * angular jaw wedge) and feature fields (brows, eyes, nose, mouth,
- * cheekbones) into three buffers:
+ * per grid cell, a signed-distance-like head function (rounded crown +
+ * chiseled piecewise silhouette) and feature fields (brows, eyes, nose, mouth,
+ * cheekbones) into four buffers:
  *
  *   sdf    — head distance field (renderer derives contour direction
  *            from its gradient, so the jawline is literally drawn with
  *            /, |, \ and — strokes)
  *   bright — 0..~1.4 luminance per cell (>1 blooms)
  *   region — which anatomy owns the cell (drives glyph vocabulary)
+ *   material — which tile vocabulary owns the cell
  *
  * Emotion parameters deform the topology itself: jawSharp changes the
- * jaw taper exponent, browAngle rotates the brow segments, mouthCurve
+ * jaw break width, browAngle rotates the brow segments, mouthCurve
  * bends the lip line, asym desynchronizes the two sides. Speech input
  * opens the mouth, drops the chin and injects turbulence.
  */
 
-import { REGION } from './glyphs.js';
+import { MATERIAL, REGION } from './glyphs.js';
+
+export function headHalfWidth(v, mouthOpen = 0, jawSharp = 0.5) {
+  const points = [
+    [-0.82, 0.42],
+    [-0.55, 0.52],
+    [-0.08, 0.62],
+    [0.38, 0.48 + jawSharp * 0.035],
+    [0.68, 0.34],
+    [1.0 + mouthOpen * 0.05, 0.09],
+  ];
+  if (v <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    if (v <= points[i][0]) {
+      const [v0, w0] = points[i - 1];
+      const [v1, w1] = points[i];
+      const t = (v - v0) / (v1 - v0);
+      return w0 + (w1 - w0) * t;
+    }
+  }
+  return points[points.length - 1][1];
+}
+
+export function classifyFaceMaterial(u, v, noise, region) {
+  if (region === REGION.EYE || region === REGION.MOUTH || region === REGION.NOSE) {
+    return MATERIAL.FINE;
+  }
+  if (region === REGION.MOUTH_INNER) return MATERIAL.MACHINE;
+  const port = u > 0.43 && u < 0.56 && v > 0.02 && v < 0.22;
+  if (port) return MATERIAL.APERTURE;
+  const seam = Math.abs(Math.abs(u) - (0.24 + (v + 0.2) * 0.24)) < 0.018;
+  if (seam && v > -0.35 && v < 0.72) return MATERIAL.SEAM;
+  return noise > 0.72 ? MATERIAL.FINE : MATERIAL.TILE;
+}
 
 export class FaceModel {
   constructor() {
@@ -79,24 +113,13 @@ export class FaceModel {
    * { mouthOpen, mouthWide, tension, energy, blink, gazeX, gazeY,
    *   coherence, swayX, swayY, t }
    */
-  fill(bright, region, sdf, p, dyn) {
+  fill(bright, region, sdf, material, p, dyn) {
     const { cols, rows } = this.grid;
     const U = this.u, V = this.v, N = this.noise;
     const t = dyn.t;
     const coh = dyn.coherence;
     const scatter = (1 - coh) * 0.45;
     const lum = p.luminance * (0.9 + 0.1 * coh);
-
-    // ---- head shape parameters -------------------------------------
-    // Narrow elongated oval tapering to a pointed chin (the "borrowed
-    // face" reference) — jawSharp still squares the corner for anger.
-    const skx = 0.62, sky = 0.64, skyc = -0.32; // skull ellipse
-    const vCheek = -0.15, vCorner = 0.44;
-    const vChin = 1.0 + dyn.mouthOpen * 0.05; // jaw drops as mouth opens
-    const wCheek = 0.60;
-    const wCorner = 0.42 + 0.08 * p.jawSharp; // sharper = squarer
-    const wChin = 0.08;
-    const taperPow = 1.3 + 1.1 * p.jawSharp; // higher = harder jaw angle
 
     // ---- feature parameters ----------------------------------------
     // Brows sit low, almost on the eyes — the hooded glare is what makes
@@ -117,6 +140,8 @@ export class FaceModel {
     for (let r = 0; r < rows; r++) {
       const v0 = V[r] + dyn.swayY;
       for (let c = 0; c < cols; c++, i++) {
+        material[i] = MATERIAL.NONE;
+
         // Coherence scatter: at low coherence the face samples "wrong"
         // coordinates, so features dissolve back into the stream.
         const nz = N[i];
@@ -124,20 +149,14 @@ export class FaceModel {
         const v1 = v0 + (N[(i * 7 + 13) % N.length] - 0.5) * scatter;
 
         // ---- head SDF -----------------------------------------------
-        const dx = u0 / skx, dy = (v1 - skyc) / sky;
-        let d = Math.sqrt(dx * dx + dy * dy) - 1; // skull
-
-        if (v1 > vCheek) {
-          let w;
-          if (v1 < vCorner) {
-            w = wCheek + ((v1 - vCheek) / (vCorner - vCheek)) * (wCorner - wCheek);
-          } else {
-            const f = Math.min(1, (v1 - vCorner) / (vChin - vCorner));
-            w = wCorner + Math.pow(f, taperPow) * (wChin - wCorner);
-          }
-          const dJaw = Math.max((Math.abs(u0) - w) / 0.35, (v1 - vChin) / 0.18);
-          d = Math.min(d, dJaw);
-        }
+        const vChin = 1.0 + dyn.mouthOpen * 0.05;
+        const top = -0.86;
+        const bottomDistance = (v1 - vChin) / 0.16;
+        const halfWidth = headHalfWidth(v1, dyn.mouthOpen, p.jawSharp);
+        const sideDistance = (Math.abs(u0) - halfWidth) / 0.28;
+        let d = Math.max(sideDistance, bottomDistance, (top - v1) / 0.16);
+        const crown = Math.hypot(u0 / 0.48, (v1 + 0.6) / 0.32) - 1;
+        if (v1 < -0.42) d = Math.min(d, crown);
 
         sdf[i] = d;
 
@@ -147,6 +166,7 @@ export class FaceModel {
           if (d < 0.5 && nz > 0.8) {
             bright[i] = (0.5 - d) * (0.35 + nz * 0.9) * lum * (0.5 + 0.5 * coh);
             region[i] = REGION.SHARD;
+            material[i] = MATERIAL.LOOSE;
           } else {
             bright[i] = 0;
             region[i] = REGION.VOID;
@@ -260,7 +280,7 @@ export class FaceModel {
               reg = REGION.MOUTH;
             } else if (v1 > yU && v1 < yL) {
               // Inner mouth: dark void that boils with speech energy
-              b = Math.min(0.9, 0.18 + dyn.energy * (0.45 + nz * 0.5));
+              b = 0.01 + dyn.energy * 0.06;
               reg = REGION.MOUTH_INNER;
             }
           }
@@ -271,9 +291,15 @@ export class FaceModel {
           }
         }
 
-        // Directional key light from the viewer's left gives the head
-        // sculptural volume (eyes stay self-luminous).
-        if (reg !== REGION.EYE) b *= 1 - u0 * 0.16;
+        material[i] = classifyFaceMaterial(u0, v1, nz, reg);
+
+        const foreheadLight = Math.max(0, 1 - Math.hypot(u0 / 0.5, (v1 + 0.52) / 0.42));
+        const cheekLight = Math.max(0, 1 - Math.hypot((Math.abs(u0) - 0.3) / 0.23, (v1 - 0.08) / 0.3));
+        const sideFalloff = 1 - Math.min(0.55, Math.abs(u0) * 0.65);
+        if (reg === REGION.FACE) b += foreheadLight * 0.22 + cheekLight * 0.18;
+        if (material[i] === MATERIAL.SEAM) b *= 0.38;
+        if (material[i] === MATERIAL.APERTURE) b = 0.025;
+        if (reg !== REGION.EYE) b *= sideFalloff;
 
         bright[i] = b * lum * (reg === REGION.EYE ? 1 : coh * 0.85 + 0.15);
         region[i] = reg;
