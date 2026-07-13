@@ -9,8 +9,8 @@
  *    resolution (devicePixelRatio-scaled canvas) via quality tiers.
  *  - Phosphor persistence comes free: instead of clearing, each frame
  *    fades the previous one with a translucent black fill.
- *  - Glitch tears are canvas self-copies (drawImage slices), not
- *    per-pixel work.
+ *  - Possession glitches offset selected grid rows while leaving the
+ *    background and most of the face anchored.
  *
  * Reduced motion: rain freezes to a slow drip, churn and glitch stop,
  * and the fade is replaced by a full clear (no trails).
@@ -18,9 +18,10 @@
 
 import {
   ATLAS_CHARS, CHAR_INDEX, TIERS, REGION,
-  RAMP, RAIN, EDGE, EYE, MOUTH, BLOCKS, DEBRIS,
+  RAMP, RAIN, EDGE, EYE, MOUTH, BLOCKS, DEBRIS, MACHINE,
   MATERIAL, THEMES, makeTiers, tierFor, wintermuteGlyphFor,
 } from './glyphs.js';
+import { PossessionController } from './possession.js';
 
 const QUALITY = {
   high: { cell: 11 },
@@ -57,7 +58,7 @@ export function rowOffset(row, possession) {
       offset += band.offset * possession.envelope;
     }
   }
-  return Math.round(offset);
+  return Math.max(-12, Math.min(12, Math.round(offset)));
 }
 
 export class CodefallRenderer {
@@ -78,8 +79,10 @@ export class CodefallRenderer {
     this._time = 0;
     this._blink = 1;
     this._blinkTimer = 2 + Math.random() * 3;
-    this._tear = null;
-    this._tearTimer = 0;
+    this.possessionController = new PossessionController();
+    this.possession = {
+      active: false, envelope: 0, bands: [], aperture: null, haloDrop: 0,
+    };
 
     this.resize();
   }
@@ -138,6 +141,7 @@ export class CodefallRenderer {
       cellW: this.cellW, cellH: this.cellH,
       width: this.w, height: this.h,
     });
+    this.possessionController.reset(this._time);
 
     this.buildAtlas(this.hueShift);
     // Reset to black so the fade pass has a clean base.
@@ -265,8 +269,21 @@ export class CodefallRenderer {
     }
     ctx.fillRect(0, 0, this.w, this.h);
 
+    const possessionIntensity = Math.min(
+      1.4,
+      0.65 + p.tearForce * 0.35 + (state.mode === 'thinking' ? 0.2 : 0)
+        + (state.mode === 'speaking' ? dyn.energy * 0.25 : 0),
+    );
+    this.possession = this.possessionController.update(this._time, {
+      rows,
+      intensity: possessionIntensity,
+      reducedMotion: this.reducedMotion,
+    });
+
     // ---- halo ring, under-pass (glyphs draw over it, occluding) --------
-    if (this.theme.ring > 0) this._drawRing(p, dyn, state, false);
+    if (this.theme.ring > 0) {
+      this._drawRing(p, dyn, state, false, this.possession.haloDrop);
+    }
 
     // ---- rain update ----------------------------------------------------
     const rainMul = this.reducedMotion ? 0.06 : p.rainSpeed;
@@ -287,9 +304,12 @@ export class CodefallRenderer {
 
     const rainDim = this.theme.rainDim;
     this._edgeCells.length = 0;
+    const duplicateAlpha = 0.3 * this.possession.envelope;
 
     let i = 0;
     for (let r = 0; r < rows; r++) {
+      const glitchCells = rowOffset(r, this.possession);
+      const glitchX = glitchCells * this.cellW;
       for (let c = 0; c < cols; c++, i++) {
         let b = this.bright[i];
         const reg = this.region[i];
@@ -354,14 +374,31 @@ export class CodefallRenderer {
           this.atlas,
           this.glyph[i] * this.atlasCW, tier * this.atlasCH,
           this.atlasCW, this.atlasCH,
-          c * this.cellW, r * this.cellH, this.cellW, this.cellH
+          c * this.cellW + (reg === REGION.VOID ? 0 : glitchX),
+          r * this.cellH, this.cellW, this.cellH
         );
+        const duplicateFeature = glitchCells !== 0 && (
+          reg === REGION.EYE || reg === REGION.MOUTH || reg === REGION.MOUTH_INNER
+        );
+        if (duplicateFeature) {
+          ctx.globalAlpha = duplicateAlpha;
+          ctx.drawImage(
+            this.atlas,
+            this.glyph[i] * this.atlasCW, tier * this.atlasCH,
+            this.atlasCW, this.atlasCH,
+            c * this.cellW - glitchX, r * this.cellH, this.cellW, this.cellH
+          );
+          ctx.globalAlpha = 1;
+        }
       }
     }
     this._wintermuteGlyphsDirty = false;
 
     // ---- disintegration debris: the face crumbles off its lower edge ---
-    this._updateDebris(dt, p, dyn, ctx);
+    this._updateDebris(dt, p, dyn, ctx, this.possession.envelope);
+
+    // ---- possession aperture: the machine beneath the face ------------
+    this._drawPossessionAperture(p, dyn);
 
     // ---- eye glow pass -----------------------------------------------
     const glowHue = this.theme.hue + p.hueShift;
@@ -381,38 +418,8 @@ export class CodefallRenderer {
     }
 
     // ---- halo ring, bright core over the glyphs -------------------------
-    if (this.theme.ring > 0) this._drawRing(p, dyn, state, true);
-
-    // ---- glitch / tear pass --------------------------------------------
-    if (!this.reducedMotion) {
-      this._tearTimer -= dt;
-      if (this._tear) {
-        this._tear.life -= dt;
-        if (this._tear.life <= 0) this._tear = null;
-      }
-      if (!this._tear && this._tearTimer <= 0 && Math.random() < p.glitchRate) {
-        this._tearTimer = 0.12 + Math.random() * 0.5;
-        this._tear = {
-          y: Math.random() * this.h,
-          hgt: 4 + Math.random() * this.h * 0.08,
-          dx: (Math.random() - 0.5) * 60 * p.tearForce,
-          life: 0.05 + Math.random() * 0.12 * (1 + p.tearForce),
-        };
-      }
-      if (this._tear) {
-        const tr = this._tear;
-        const sy = tr.y * this.dpr, sh = tr.hgt * this.dpr;
-        // Displaced slice
-        ctx.drawImage(this.canvas, 0, sy, this.canvas.width, sh,
-          tr.dx, tr.y, this.w, tr.hgt);
-        // Chromatic ghost of the slice
-        ctx.globalCompositeOperation = 'screen';
-        ctx.globalAlpha = 0.35;
-        ctx.drawImage(this.canvas, 0, sy, this.canvas.width, sh,
-          -tr.dx * 0.6, tr.y + 1, this.w, tr.hgt);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-      }
+    if (this.theme.ring > 0) {
+      this._drawRing(p, dyn, state, true, this.possession.haloDrop);
     }
 
     // ---- fps accounting -------------------------------------------------
@@ -421,6 +428,63 @@ export class CodefallRenderer {
       this.fps = Math.round(this._fpsN / this._fpsAcc);
       this._fpsAcc = 0; this._fpsN = 0;
     }
+  }
+
+  /** Reveal a short-lived machine port beneath displaced face tiles. */
+  _drawPossessionAperture(p, dyn) {
+    const aperture = this.possession.aperture;
+    const envelope = this.possession.envelope;
+    if (!aperture || envelope <= 0) return;
+
+    const ctx = this.ctx;
+    const scale = this.model.scale;
+    const x = this.model.cx + aperture.side * scale * 0.42;
+    const y = this.model.cy + aperture.y * scale;
+    const radius = aperture.radius * scale;
+    const hue = this.theme.hue + p.hueShift;
+    const pulse = 0.8 + dyn.energy * 0.2;
+
+    ctx.save();
+    ctx.globalAlpha = envelope;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `hsla(${hue}, 80%, 72%, ${0.8 * pulse})`;
+    ctx.lineWidth = 1;
+    for (let ring = 0; ring < 2; ring++) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius * (1 + ring * 0.22), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    for (let tick = 0; tick < 4; tick++) {
+      const angle = tick * Math.PI * 0.5;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      ctx.beginPath();
+      ctx.moveTo(x + cos * radius * 1.28, y + sin * radius * 1.28);
+      ctx.lineTo(x + cos * radius * 1.58, y + sin * radius * 1.58);
+      ctx.stroke();
+    }
+
+    const glyphRadius = radius * 1.72;
+    const glyphW = this.cellW * 0.85;
+    const glyphH = this.cellH * 0.85;
+    for (let glyph = 0; glyph < 6; glyph++) {
+      const angle = glyph * Math.PI / 3;
+      const glyphIndex = CHAR_INDEX.get(MACHINE[glyph % MACHINE.length]);
+      ctx.drawImage(
+        this.atlas,
+        glyphIndex * this.atlasCW, (TIERS - 1) * this.atlasCH,
+        this.atlasCW, this.atlasCH,
+        x + Math.cos(angle) * glyphRadius - glyphW * 0.5,
+        y + Math.sin(angle) * glyphRadius - glyphH * 0.5,
+        glyphW, glyphH,
+      );
+    }
+    ctx.restore();
   }
 
   /**
@@ -510,10 +574,12 @@ export class CodefallRenderer {
    * fall away, fading. Spawn rate rises with churn and with coherence
    * loss, so interruptions visibly shed pieces of the face.
    */
-  _updateDebris(dt, p, dyn, ctx) {
+  _updateDebris(dt, p, dyn, ctx, breach = 0) {
     if (this.reducedMotion) return;
     const cap = 80;
-    this._debrisAcc += dt * (5 + p.churn * 22 + (1 - dyn.coherence) * 55);
+    this._debrisAcc += dt * (
+      5 + p.churn * 22 + (1 - dyn.coherence) * 55 + breach * 70
+    );
     while (this._debrisAcc >= 1 && this._debris.length < cap && this._edgeCells.length) {
       this._debrisAcc -= 1;
       const idx = this._edgeCells[(Math.random() * this._edgeCells.length) | 0];

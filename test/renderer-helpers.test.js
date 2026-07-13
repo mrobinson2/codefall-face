@@ -31,6 +31,13 @@ test('rowOffset scales a matching band by its envelope', () => {
   ] }), 3);
 });
 
+test('overlapping bands cannot shift more than twelve cells', () => {
+  assert.equal(rowOffset(5, { active: true, envelope: 1, bands: [
+    { start: 2, height: 8, offset: 9 },
+    { start: 4, height: 3, offset: 9 },
+  ] }), 12);
+});
+
 test('wintermute dirty refresh includes every non-void cell only', () => {
   assert.equal(shouldRefreshWintermuteGlyph(true, 'wintermute', 1), true);
   assert.equal(shouldRefreshWintermuteGlyph(true, 'wintermute', 0), false);
