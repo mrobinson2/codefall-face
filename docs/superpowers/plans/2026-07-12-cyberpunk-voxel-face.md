@@ -1095,7 +1095,7 @@ Check:
 - resize during idle and possession does not throw or leave stale bands
 - voice playback, lip sync, emotion changes, blink, gaze, and boot assembly work
 
-- [ ] **Step 6: Fix any observed defect and rerun the relevant check**
+- [x] **Step 6: Fix any observed defect and rerun the relevant check**
 
 Keep fixes within the approved design. Add a regression assertion to the closest test file for any geometry, scheduling, configuration, or bound defect.
 

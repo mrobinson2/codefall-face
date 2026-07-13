@@ -77,6 +77,19 @@ test('switching themes marks wintermute glyphs dirty immediately', () => {
   assert.equal(renderer._wintermuteGlyphsDirty, false);
 });
 
+test('geometry invalidation refreshes wintermute glyphs only', () => {
+  const renderer = Object.create(CodefallRenderer.prototype);
+  renderer.theme = { name: 'wintermute' };
+  renderer._wintermuteGlyphsDirty = false;
+  renderer.invalidateGeometry();
+  assert.equal(renderer._wintermuteGlyphsDirty, true);
+
+  renderer.theme = { name: 'codefall' };
+  renderer._wintermuteGlyphsDirty = false;
+  renderer.invalidateGeometry();
+  assert.equal(renderer._wintermuteGlyphsDirty, false);
+});
+
 test('quality tiers cap debris', () => {
   assert.deepEqual(
     ['high', 'medium', 'low'].map(rendererHelpers.debrisLimit),

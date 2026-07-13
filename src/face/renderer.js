@@ -172,6 +172,10 @@ export class CodefallRenderer {
     this.buildAtlas(this.hueShift);
   }
 
+  invalidateGeometry() {
+    if (this.theme.name === 'wintermute') this._wintermuteGlyphsDirty = true;
+  }
+
   buildAtlas(hueShift) {
     this.hueShift = hueShift;
     const tiers = makeTiers(this.theme.hue + hueShift * 0.6, this.theme.sat);

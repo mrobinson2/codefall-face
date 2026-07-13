@@ -70,12 +70,12 @@ export class PossessionController {
     if (!this.active && now >= this.nextAt) this.start(now, rows, intensity);
     if (!this.active) return IDLE;
 
-    const progress = (now - this.active.start) / this.active.duration;
-    if (progress >= 1) {
+    if (now >= this.active.start + this.active.duration) {
       this.active = null;
       this.nextAt = now + range(this.random, 7, 18);
       return IDLE;
     }
+    const progress = (now - this.active.start) / this.active.duration;
     const pulse = Math.abs(Math.sin(progress * Math.PI * 3));
     return {
       active: true,
