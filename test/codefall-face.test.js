@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import { CodefallFace } from '../src/codefall-face.js';
 import { FaceModel } from '../src/face/face-model.js';
 
-test('geometry toggle changes only geometry state', () => {
+function createFace(geometry = 'chiseled') {
   const face = Object.create(CodefallFace.prototype);
   const params = { mouthWidth: 0.8 };
   const gaze = { x: 0.2, y: -0.1 };
   const engine = { speaking: true };
   const possession = { active: true, envelope: 0.7 };
   const events = [];
-  face.model = new FaceModel('chiseled');
-  face.geometry = 'chiseled';
+  face.model = new FaceModel(geometry);
+  face.geometry = geometry;
   face.params = params;
   face.targetEmotion = 'anger';
   face.state = 'speaking';
@@ -21,11 +21,55 @@ test('geometry toggle changes only geometry state', () => {
   face.renderer = { possession };
   face.emit = (type, detail) => events.push({ type, detail });
 
+  return { face, params, gaze, engine, possession, events };
+}
+
+function withGeometryDataset(geometry, callback) {
+  let writes = 0;
+  const dataset = new Proxy({ geometry }, {
+    set(target, property, value) {
+      writes++;
+      target[property] = value;
+      return true;
+    },
+  });
+
   const previousDocument = globalThis.document;
-  globalThis.document = { body: { dataset: {} } };
+  globalThis.document = { body: { dataset } };
   try {
+    callback({ dataset, writes: () => writes });
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+}
+
+test('invalid geometry returns the current style without side effects', () => {
+  const { face, events } = createFace('smooth');
+  withGeometryDataset('smooth', ({ dataset, writes }) => {
+    assert.equal(face.setGeometry('wireframe'), 'smooth');
+    assert.equal(dataset.geometry, 'smooth');
+    assert.equal(writes(), 0);
+    assert.deepEqual(events, []);
+  });
+});
+
+test('setting the current geometry has no side effects', () => {
+  const { face, events } = createFace('chiseled');
+  withGeometryDataset('chiseled', ({ dataset, writes }) => {
+    assert.equal(face.setGeometry('chiseled'), 'chiseled');
+    assert.equal(dataset.geometry, 'chiseled');
+    assert.equal(writes(), 0);
+    assert.deepEqual(events, []);
+  });
+});
+
+test('geometry toggle changes only geometry state', () => {
+  const { face, params, gaze, engine, possession, events } = createFace();
+  withGeometryDataset('chiseled', ({ dataset, writes }) => {
     assert.equal(face.toggleGeometry(), 'smooth');
-    assert.equal(document.body.dataset.geometry, 'smooth');
+    assert.equal(dataset.geometry, 'smooth');
+    assert.equal(writes(), 1);
     assert.deepEqual(events, [{ type: 'geometry', detail: { geometry: 'smooth' } }]);
     assert.equal(face.params, params);
     assert.equal(face.targetEmotion, 'anger');
@@ -34,8 +78,5 @@ test('geometry toggle changes only geometry state', () => {
     assert.equal(face._gaze, gaze);
     assert.equal(face.engine, engine);
     assert.equal(face.renderer.possession, possession);
-  } finally {
-    if (previousDocument === undefined) delete globalThis.document;
-    else globalThis.document = previousDocument;
-  }
+  });
 });

@@ -175,7 +175,9 @@ export class CodefallFace extends EventTarget {
   }
 
   setGeometry(style) {
-    this.geometry = this.model.setGeometry(style);
+    const geometry = this.model.setGeometry(style);
+    if (geometry === this.geometry) return this.geometry;
+    this.geometry = geometry;
     document.body.dataset.geometry = this.geometry;
     this.emit('geometry', { geometry: this.geometry });
     return this.geometry;
