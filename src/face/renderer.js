@@ -19,7 +19,7 @@
 import {
   ATLAS_CHARS, CHAR_INDEX, TIERS, REGION,
   RAMP, RAIN, EDGE, EYE, MOUTH, BLOCKS, DEBRIS,
-  THEMES, makeTiers, tierFor,
+  MATERIAL, THEMES, makeTiers, tierFor, wintermuteGlyphFor,
 } from './glyphs.js';
 
 const QUALITY = {
@@ -27,6 +27,26 @@ const QUALITY = {
   medium: { cell: 14 },
   low: { cell: 17 },
 };
+
+export function ringSegments(time, reducedMotion, breach = 0) {
+  const drift = reducedMotion ? 0 : Math.sin(time * 0.08) * 0.035;
+  const gap = 0.54 + breach * 0.22;
+  return [
+    { start: -Math.PI * 0.42 + drift, end: Math.PI * (1.38 - gap) + drift },
+    { start: Math.PI * (1.47 + gap * 0.2) - drift, end: Math.PI * 1.76 - drift },
+  ];
+}
+
+export function rowOffset(row, possession) {
+  if (!possession?.active) return 0;
+  let offset = 0;
+  for (const band of possession.bands) {
+    if (row >= band.start && row < band.start + band.height) {
+      offset += band.offset * possession.envelope;
+    }
+  }
+  return Math.round(offset);
+}
 
 export class CodefallRenderer {
   constructor(canvas, faceModel, opts = {}) {
@@ -81,6 +101,7 @@ export class CodefallRenderer {
     this.bright = new Float32Array(n);
     this.region = new Uint8Array(n);
     this.sdf = new Float32Array(n);
+    this.material = new Uint8Array(n);
     this.glyph = new Uint16Array(n); // atlas index per cell
     this.churnPhase = new Float32Array(n);
     for (let i = 0; i < n; i++) {
@@ -140,7 +161,11 @@ export class CodefallRenderer {
   }
 
   /** Pick a glyph for a cell from its region's vocabulary. */
-  pickGlyph(reg, intensity, gx, gy, rainChar) {
+  pickGlyph(reg, material, intensity, gx, gy, rainChar, seed) {
+    if (this.theme.name === 'wintermute' && reg !== REGION.VOID) {
+      const char = wintermuteGlyphFor(material, intensity, seed);
+      return CHAR_INDEX.get(char);
+    }
     switch (reg) {
       case REGION.EDGE: {
         // Contour direction = perpendicular to the SDF gradient.
@@ -211,7 +236,7 @@ export class CodefallRenderer {
     }
 
     // ---- simulation ---------------------------------------------------
-    this.model.fill(this.bright, this.region, this.sdf, p, dyn);
+    this.model.fill(this.bright, this.region, this.sdf, this.material, p, dyn);
 
     // ---- rebuild atlas if the emotion changed the hue ------------------
     if (Math.abs(p.hueShift - this.hueShift) > 4) this.buildAtlas(p.hueShift);
@@ -254,6 +279,7 @@ export class CodefallRenderer {
       for (let c = 0; c < cols; c++, i++) {
         let b = this.bright[i];
         const reg = this.region[i];
+        const mat = this.material[i];
         const col = this.rain[c];
         if (reg === REGION.EDGE) this._edgeCells.push(i);
 
@@ -292,7 +318,15 @@ export class CodefallRenderer {
             gy = B - T;
           }
           const rainChar = RAIN[(col.charSeed + r) % RAIN.length];
-          this.glyph[i] = this.pickGlyph(reg, Math.min(1, b), gx, gy, rainChar);
+          this.glyph[i] = this.pickGlyph(
+            reg, mat, Math.min(1, b), gx, gy, rainChar, this.churnPhase[i]
+          );
+        }
+
+        if (this.theme.name === 'wintermute') {
+          if (mat === MATERIAL.SEAM) b *= 0.5;
+          if (mat === MATERIAL.APERTURE) b = Math.min(b, 0.04);
+          if (mat === MATERIAL.MACHINE) b = Math.min(1.25, b + dyn.energy * 0.18);
         }
 
         const tier = tierFor(Math.min(1.399, b) / 1.4 + (inRain && dHead < 1 ? 0.3 : 0));
@@ -374,7 +408,7 @@ export class CodefallRenderer {
    * over-pass strokes rotating bright arc segments that flicker and
    * surge with speech energy.
    */
-  _drawRing(p, dyn, state, over) {
+  _drawRing(p, dyn, state, over, breach = 0) {
     const ctx = this.ctx;
     const cx = this.model.cx;
     const cy = this.model.cy + 0.02 * this.model.scale;
@@ -388,6 +422,39 @@ export class CodefallRenderer {
 
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
+    if (this.theme.name === 'wintermute') {
+      if (!over) {
+        ctx.strokeStyle = `hsla(${hue}, ${sat}%, 65%, ${(0.10 * strength).toFixed(3)})`;
+        ctx.lineWidth = R * 0.08;
+        for (const arc of ringSegments(t, this.reducedMotion, breach)) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, R, arc.start, arc.end);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = `hsla(${hue}, ${sat}%, 75%, ${(0.14 * strength).toFixed(3)})`;
+        ctx.lineWidth = R * 0.025;
+        for (const arc of ringSegments(t, this.reducedMotion, breach)) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, R, arc.start, arc.end);
+          ctx.stroke();
+        }
+      } else {
+        const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
+        if (this.detectQuality() !== 'low') {
+          ctx.shadowBlur = 14;
+          ctx.shadowColor = `hsla(${hue}, ${sat}%, 70%, 0.8)`;
+        }
+        ctx.strokeStyle = `hsla(${hue}, ${sat}%, 88%, ${(0.55 * strength * flick).toFixed(3)})`;
+        ctx.lineWidth = 2.4;
+        for (const arc of ringSegments(t, this.reducedMotion, breach)) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, R, arc.start, arc.end);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+      return;
+    }
     if (!over) {
       // Wide soft annulus behind everything.
       ctx.strokeStyle = `hsla(${hue}, ${sat}%, 65%, ${(0.10 * strength).toFixed(3)})`;
