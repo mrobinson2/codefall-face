@@ -26,3 +26,18 @@ test('material selection is deterministic for a fixed seed', () => {
 test('aperture material selects a dark machine glyph', () => {
   assert.ok(MACHINE.includes(wintermuteGlyphFor(MATERIAL.APERTURE, 0.8, 0.5)));
 });
+
+test('negative intensity selects a defined glyph for every wintermute material', () => {
+  const vocabularies = [
+    [MATERIAL.TILE, TILES_WIDE],
+    [MATERIAL.FINE, TILES_FINE],
+    [MATERIAL.SEAM, SEAMS],
+    [MATERIAL.APERTURE, MACHINE],
+    [MATERIAL.MACHINE, MACHINE],
+    [MATERIAL.LOOSE, TILES_WIDE],
+  ];
+  for (const [material, vocabulary] of vocabularies) {
+    const glyph = wintermuteGlyphFor(material, -0.5, 0);
+    assert.ok(vocabulary.includes(glyph), `material ${material}: ${glyph}`);
+  }
+});

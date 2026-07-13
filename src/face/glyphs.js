@@ -50,7 +50,8 @@ export function wintermuteGlyphFor(material, intensity, seed) {
     : material === MATERIAL.SEAM ? SEAMS
       : material === MATERIAL.APERTURE || material === MATERIAL.MACHINE ? MACHINE
         : TILES_WIDE;
-  const lightBias = Math.min(vocab.length - 1, Math.floor(intensity * vocab.length));
+  const safeIntensity = Math.max(0, Math.min(1, intensity));
+  const lightBias = Math.min(vocab.length - 1, Math.floor(safeIntensity * vocab.length));
   const jitter = Math.floor(seed * vocab.length) % vocab.length;
   return vocab[(lightBias + jitter) % vocab.length];
 }

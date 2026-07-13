@@ -337,7 +337,7 @@ export class CodefallRenderer {
           }
           const rainChar = RAIN[(col.charSeed + r) % RAIN.length];
           this.glyph[i] = this.pickGlyph(
-            reg, mat, Math.min(1, b), gx, gy, rainChar, this.churnPhase[i]
+            reg, mat, Math.max(0, Math.min(1, b)), gx, gy, rainChar, this.churnPhase[i]
           );
         }
 
