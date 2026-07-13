@@ -1043,13 +1043,13 @@ git commit -m "feat: toggle face geometry"
 - Consumes the complete face renderer.
 - Produces verified screenshots for review; do not commit the user's reference images.
 
-- [ ] **Step 1: Run the automated suite**
+- [x] **Step 1: Run the automated suite**
 
 Run: `npm test`
 
 Expected: 17 tests pass with zero failures.
 
-- [ ] **Step 2: Check syntax for browser modules**
+- [x] **Step 2: Check syntax for browser modules**
 
 Run:
 
