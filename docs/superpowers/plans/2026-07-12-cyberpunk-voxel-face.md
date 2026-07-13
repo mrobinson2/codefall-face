@@ -848,7 +848,7 @@ git commit -m "feat: finish wintermute face treatment"
 
 ---
 
-### Task 6A: Add the clickable chiseled and smooth geometry toggle
+### Task 7: Add the clickable chiseled and smooth geometry toggle
 
 **Files:**
 - Modify: `src/face/face-model.js`
@@ -1033,7 +1033,7 @@ git commit -m "feat: toggle face geometry"
 
 ---
 
-### Task 7: Run visual and regression verification
+### Task 8: Run visual and regression verification
 
 **Files:**
 - Modify if verification finds a defect: `src/face/face-model.js`, `src/face/renderer.js`, `src/face/glyphs.js`, or `styles.css`
