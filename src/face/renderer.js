@@ -46,6 +46,18 @@ export function ringSegments(time, reducedMotion, breach = 0) {
   ];
 }
 
+export function codefallRingSpans(breach = 0) {
+  const clamped = Math.max(0, Math.min(1, breach));
+  return [
+    Math.PI * (1.62 - clamped * 0.36),
+    Math.PI * (0.4 - clamped * 0.16),
+  ];
+}
+
+export function apertureHardwareStroke(alpha) {
+  return `hsla(190, 90%, 72%, ${alpha})`;
+}
+
 export function shouldRefreshWintermuteGlyph(dirty, themeName, reg) {
   return dirty && themeName === 'wintermute' && reg !== REGION.VOID;
 }
@@ -441,7 +453,6 @@ export class CodefallRenderer {
     const x = this.model.cx + aperture.side * scale * 0.42;
     const y = this.model.cy + aperture.y * scale;
     const radius = aperture.radius * scale;
-    const hue = this.theme.hue + p.hueShift;
     const pulse = 0.8 + dyn.energy * 0.2;
 
     ctx.save();
@@ -452,7 +463,7 @@ export class CodefallRenderer {
     ctx.fill();
 
     ctx.globalCompositeOperation = 'lighter';
-    ctx.strokeStyle = `hsla(${hue}, 80%, 72%, ${0.8 * pulse})`;
+    ctx.strokeStyle = apertureHardwareStroke(0.8 * pulse);
     ctx.lineWidth = 1;
     for (let ring = 0; ring < 2; ring++) {
       ctx.beginPath();
@@ -552,6 +563,7 @@ export class CodefallRenderer {
       // Thin bright cores: one long rotating arc, one short counter-arc.
       const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
       const useBlur = this.detectQuality() !== 'low' && !this.reducedMotion;
+      const [longSpan, shortSpan] = codefallRingSpans(breach);
       if (useBlur) {
         ctx.shadowBlur = 16;
         ctx.shadowColor = `hsla(${hue}, ${sat}%, 70%, 0.8)`;
@@ -559,12 +571,12 @@ export class CodefallRenderer {
       const a0 = this.reducedMotion ? -Math.PI / 2 : t * 0.22;
       ctx.strokeStyle = `hsla(${hue}, ${sat}%, 82%, ${(0.55 * strength * flick).toFixed(3)})`;
       ctx.lineWidth = 2.2;
-      ctx.beginPath(); ctx.arc(cx, cy, R, a0, a0 + Math.PI * 1.62); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, R, a0, a0 + longSpan); ctx.stroke();
 
       const b0 = -t * 0.13 + 2.1;
       ctx.strokeStyle = `hsla(${hue}, ${sat}%, 88%, ${(0.4 * strength * flick).toFixed(3)})`;
       ctx.lineWidth = 1.4;
-      ctx.beginPath(); ctx.arc(cx, cy, R * 1.012, b0, b0 + Math.PI * 0.4); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, R * 1.012, b0, b0 + shortSpan); ctx.stroke();
     }
     ctx.restore();
   }

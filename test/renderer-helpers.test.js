@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import * as rendererHelpers from '../src/face/renderer.js';
+
+const {
   CodefallRenderer, ringSegments, rowOffset, shouldRefreshWintermuteGlyph,
-} from '../src/face/renderer.js';
+} = rendererHelpers;
 
 test('wintermute ring keeps a large right-side gap', () => {
   const arcs = ringSegments(0, true, 0);
@@ -17,6 +19,27 @@ test('wintermute breach widens the combined right-side gap', () => {
   const breached = ringSegments(0, true, 1);
   const rightGap = (arcs) => arcs[0].start + Math.PI * 2 - arcs[1].end;
   assert.ok(rightGap(breached) > rightGap(closed));
+});
+
+test('codefall breach shrinks both halo spans while keeping them positive', () => {
+  assert.equal(typeof rendererHelpers.codefallRingSpans, 'function');
+  const stable = rendererHelpers.codefallRingSpans(0);
+  const partial = rendererHelpers.codefallRingSpans(0.5);
+  const breached = rendererHelpers.codefallRingSpans(1);
+  assert.equal(stable.length, 2);
+  for (let i = 0; i < stable.length; i++) {
+    assert.ok(stable[i] > partial[i]);
+    assert.ok(partial[i] > breached[i]);
+    assert.ok(breached[i] > 0);
+  }
+});
+
+test('possession aperture hardware uses fixed cold cyan', () => {
+  assert.equal(typeof rendererHelpers.apertureHardwareStroke, 'function');
+  assert.equal(
+    rendererHelpers.apertureHardwareStroke(0.64),
+    'hsla(190, 90%, 72%, 0.64)',
+  );
 });
 
 test('rowOffset returns zero outside active bands', () => {
