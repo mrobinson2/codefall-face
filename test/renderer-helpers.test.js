@@ -76,3 +76,10 @@ test('switching themes marks wintermute glyphs dirty immediately', () => {
   renderer.setTheme('codefall');
   assert.equal(renderer._wintermuteGlyphsDirty, false);
 });
+
+test('quality tiers cap debris', () => {
+  assert.deepEqual(
+    ['high', 'medium', 'low'].map(rendererHelpers.debrisLimit),
+    [120, 72, 36],
+  );
+});

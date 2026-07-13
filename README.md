@@ -15,16 +15,31 @@ static host), open the page, press **DEMO**. No accounts, no keys — the
 face runs on Web Speech and pure canvas.
 
 **Two visual themes**, toggled with the ◐ button (or `?theme=`, or
-`face.setTheme()`): **codefall** (default) — neon-green matrix phosphor,
+`face.setTheme()`): **codefall** — neon-green matrix phosphor,
 radiant lens eyes, contour-line features, the silhouette fragmenting
-into pixel shards; and **wintermute** — a monochrome ice-white voxel
+into pixel shards; and **wintermute** (default) — a monochrome ice-white voxel
 ghost inside a broken neon halo. Both share the same procedural face;
 only palette, glyph vocabulary, halo intensity, and rain density change.
 The ▾ button minimizes the control console.
 
-| Codefall (default) | Wintermute |
+| Codefall | Wintermute (default) |
 |---|---|
 | ![Codefall theme](assets/codefall-theme.png) | ![Wintermute theme](assets/wintermute-theme.png) |
+
+### Face themes
+
+The default `wintermute` theme renders a cold voxel apparition with a broken
+halo, tile disintegration, and short possession glitches. Select the original
+green treatment with:
+
+```js
+window.CODEFALL_CONFIG = {
+  face: { theme: 'codefall' },
+};
+```
+
+Codefall Face respects `prefers-reduced-motion` by removing slice displacement,
+feature duplication, rapid halo interruptions, and animated debris bursts.
 
 ---
 

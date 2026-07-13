@@ -58,7 +58,7 @@ const defaults = {
 
   face: {
     // 'codefall' (neon green matrix) | 'wintermute' (ice-white voxel ghost)
-    theme: 'codefall',
+    theme: 'wintermute',
     // 'auto' | 'high' | 'medium' | 'low'
     quality: 'auto',
     // Respect prefers-reduced-motion unless explicitly set false.

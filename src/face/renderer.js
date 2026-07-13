@@ -73,6 +73,10 @@ export function rowOffset(row, possession) {
   return Math.max(-12, Math.min(12, Math.round(offset)));
 }
 
+export function debrisLimit(quality) {
+  return quality === 'low' ? 36 : quality === 'medium' ? 72 : 120;
+}
+
 export class CodefallRenderer {
   constructor(canvas, faceModel, opts = {}) {
     this.canvas = canvas;
@@ -116,7 +120,8 @@ export class CodefallRenderer {
     this.canvas.width = this.w * dpr;
     this.canvas.height = this.h * dpr;
 
-    const q = QUALITY[this.detectQuality()];
+    this.quality = this.detectQuality();
+    const q = QUALITY[this.quality];
     const font = q.cell;
     this.cellW = Math.round(font * 0.62 * 100) / 100;
     this.cellH = Math.round(font * 1.05 * 100) / 100;
@@ -407,7 +412,7 @@ export class CodefallRenderer {
     this._wintermuteGlyphsDirty = false;
 
     // ---- disintegration debris: the face crumbles off its lower edge ---
-    this._updateDebris(dt, p, dyn, ctx, this.possession.envelope);
+    this._updateDebris(dt, p, dyn, ctx, state.mode === 'booting');
 
     // ---- possession aperture: the machine beneath the face ------------
     this._drawPossessionAperture(p, dyn);
@@ -536,7 +541,7 @@ export class CodefallRenderer {
         }
       } else {
         const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
-        if (this.detectQuality() !== 'low') {
+        if (this.quality !== 'low') {
           ctx.shadowBlur = 14;
           ctx.shadowColor = `hsla(${hue}, ${sat}%, 70%, 0.8)`;
         }
@@ -562,7 +567,7 @@ export class CodefallRenderer {
     } else {
       // Thin bright cores: one long rotating arc, one short counter-arc.
       const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
-      const useBlur = this.detectQuality() !== 'low' && !this.reducedMotion;
+      const useBlur = this.quality !== 'low' && !this.reducedMotion;
       const [longSpan, shortSpan] = codefallRingSpans(breach);
       if (useBlur) {
         ctx.shadowBlur = 16;
@@ -586,26 +591,32 @@ export class CodefallRenderer {
    * fall away, fading. Spawn rate rises with churn and with coherence
    * loss, so interruptions visibly shed pieces of the face.
    */
-  _updateDebris(dt, p, dyn, ctx, breach = 0) {
+  _updateDebris(dt, p, dyn, ctx, booting = false) {
     if (this.reducedMotion) return;
-    const cap = 80;
+    const breach = this.possession?.envelope || 0;
+    const cap = debrisLimit(this.quality);
     this._debrisAcc += dt * (
-      5 + p.churn * 22 + (1 - dyn.coherence) * 55 + breach * 70
+      4 + p.churn * 16 + (1 - dyn.coherence) * 58 + breach * 90
     );
     while (this._debrisAcc >= 1 && this._debris.length < cap && this._edgeCells.length) {
       this._debrisAcc -= 1;
-      const idx = this._edgeCells[(Math.random() * this._edgeCells.length) | 0];
-      const c = idx % this.cols, r = (idx / this.cols) | 0;
-      const px = c * this.cellW;
-      this._debris.push({
-        x: px, y: r * this.cellH,
-        // Shards drift outward from the silhouette, then sink.
-        vx: (px < this.model.cx ? -1 : 1) * (4 + Math.random() * 16),
-        vy: 2 + Math.random() * 16,
-        life: 1, decay: 0.4 + Math.random() * 0.5,
-        gi: CHAR_INDEX.get(DEBRIS[(Math.random() * DEBRIS.length) | 0]),
-        size: 0.5 + Math.random() * 0.6,
-      });
+      const sourceStart = booting || this.possession?.active
+        ? 0
+        : Math.floor(this._edgeCells.length * 0.45);
+      const sourceCount = this._edgeCells.length - sourceStart;
+      const spawnCount = this.quality === 'high' && breach > 0 ? 2 : 1;
+      for (let spawned = 0; spawned < spawnCount && this._debris.length < cap; spawned++) {
+        const idx = this._edgeCells[sourceStart + ((Math.random() * sourceCount) | 0)];
+        const c = idx % this.cols, r = (idx / this.cols) | 0;
+        this._debris.push({
+          x: c * this.cellW, y: r * this.cellH,
+          vx: -14 + Math.random() * 28,
+          vy: 4 + Math.random() * 20,
+          life: 1, decay: 0.4 + Math.random() * 0.5,
+          gi: CHAR_INDEX.get(DEBRIS[(Math.random() * DEBRIS.length) | 0]),
+          size: 0.55 + Math.random() * 0.8,
+        });
+      }
     }
     if (!this._debris.length) return;
     for (let k = this._debris.length - 1; k >= 0; k--) {
