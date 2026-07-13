@@ -55,14 +55,16 @@ export class CodefallFace extends EventTarget {
         ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
         : !!rm;
 
-    this.model = new FaceModel();
+    this.model = new FaceModel(this.config.face.geometry);
     this.renderer = new CodefallRenderer(this.canvas, this.model, {
       quality: this.config.face.quality,
       reducedMotion: this.reducedMotion,
       theme: this.config.face.theme,
     });
-    this.theme = this.config.face.theme;
+    this.theme = this.renderer.theme.name;
     document.body.dataset.theme = this.theme;
+    this.geometry = this.model.geometry;
+    document.body.dataset.geometry = this.geometry;
     this.engine = new SpeechEngine();
 
     // ---- expressive state ----------------------------------------------
@@ -166,10 +168,24 @@ export class CodefallFace extends EventTarget {
 
   /** Switch visual theme: 'codefall' | 'wintermute'. */
   setTheme(name) {
-    this.theme = name;
     this.renderer.setTheme(name);
-    document.body.dataset.theme = name;
-    this.emit('theme', { theme: name });
+    this.theme = this.renderer.theme.name;
+    document.body.dataset.theme = this.theme;
+    this.emit('theme', { theme: this.theme });
+  }
+
+  setGeometry(style) {
+    const geometry = this.model.setGeometry(style);
+    if (geometry === this.geometry) return this.geometry;
+    this.geometry = geometry;
+    this.renderer.invalidateGeometry();
+    document.body.dataset.geometry = this.geometry;
+    this.emit('geometry', { geometry: this.geometry });
+    return this.geometry;
+  }
+
+  toggleGeometry() {
+    return this.setGeometry(this.geometry === 'chiseled' ? 'smooth' : 'chiseled');
   }
 
   /**

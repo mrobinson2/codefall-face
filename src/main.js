@@ -121,6 +121,21 @@ $('#theme-toggle').onclick = () => {
   debugLog(`theme → ${face.theme}`);
 };
 
+const geometryBtn = $('#geometry-toggle');
+function syncGeometryButton() {
+  const smooth = face.geometry === 'smooth';
+  geometryBtn.textContent = smooth ? '○' : '◇';
+  geometryBtn.setAttribute('aria-pressed', String(smooth));
+  geometryBtn.setAttribute('aria-label', `Face geometry: ${face.geometry}`);
+  geometryBtn.title = `Face geometry: ${face.geometry}`;
+}
+geometryBtn.onclick = () => {
+  face.toggleGeometry();
+  syncGeometryButton();
+  debugLog(`geometry → ${face.geometry}`);
+};
+syncGeometryButton();
+
 // ---- console minimize + docking + drag ---------------------------------
 const consoleEl = $('#console');
 const consoleToggle = $('#console-toggle');

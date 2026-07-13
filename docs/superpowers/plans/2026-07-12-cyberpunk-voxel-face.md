@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - Set `wintermute` as the default theme and keep `codefall` selectable.
+- Keep `chiseled` as the default geometry and provide a clickable `chiseled`/`smooth` toggle; both geometry paths must use scalar math without per-cell arrays or objects.
 - Keep the current speech, emotion, blink, gaze, boot, resize, and public API behavior.
 - Schedule possession events 7 to 18 seconds apart; each event lasts 180 to 650 milliseconds.
 - Disable slice displacement, feature duplication, and flashing in reduced-motion mode.
@@ -33,6 +34,8 @@
 - Modify `src/face/face-model.js`: chiseled head width, planar lighting, tile materials, apertures, and dark mouth interior.
 - Modify `src/face/renderer.js`: material buffer, stable tile rendering, halo, possession integration, and disintegration.
 - Modify `src/config.js`: wintermute default.
+- Modify `src/codefall-face.js`: public geometry state and setter.
+- Modify `src/main.js` and `index.html`: accessible geometry toggle.
 - Modify `README.md`: default appearance, theme override, and reduced-motion behavior.
 
 ---
@@ -845,7 +848,192 @@ git commit -m "feat: finish wintermute face treatment"
 
 ---
 
-### Task 7: Run visual and regression verification
+### Task 7: Add the clickable chiseled and smooth geometry toggle
+
+**Files:**
+- Modify: `src/face/face-model.js`
+- Modify: `src/codefall-face.js:58-65,167-173`
+- Modify: `src/config.js:59-68`
+- Modify: `src/main.js:119-123`
+- Modify: `index.html:54-61`
+- Modify: `README.md`
+- Modify: `test/face-model.test.js`
+- Modify: `test/config.test.js`
+
+**Interfaces:**
+- Produces `smoothHeadDistance(u, v, mouthOpen, jawSharp)` with scalar math only.
+- Produces `FaceModel.setGeometry(style)`, accepting `chiseled` or `smooth`.
+- Produces `CodefallFace.setGeometry(style)` and `CodefallFace.toggleGeometry()`.
+- Emits `geometry` with `{ geometry: style }` after a successful change.
+
+- [ ] **Step 1: Write failing geometry and configuration tests**
+
+Extend the existing face-model import in `test/face-model.test.js` to include `FaceModel` and `smoothHeadDistance`, then append:
+
+```javascript
+test('smooth geometry has a rounded temple and tapered jaw', () => {
+  assert.ok(smoothHeadDistance(0.5, -0.45, 0, 0.5) < 0);
+  assert.ok(smoothHeadDistance(0.5, 0.72, 0, 0.5) > 0);
+});
+
+test('FaceModel accepts only known geometry styles', () => {
+  const model = new FaceModel('chiseled');
+  assert.equal(model.setGeometry('smooth'), 'smooth');
+  assert.equal(model.geometry, 'smooth');
+  assert.equal(model.setGeometry('wireframe'), 'smooth');
+});
+
+test('both head geometry helpers avoid per-call arrays', () => {
+  const aggregate = /(?:=\s*\[|new\s+Array\s*\()/;
+  assert.doesNotMatch(smoothHeadDistance.toString(), aggregate);
+  assert.doesNotMatch(headHalfWidth.toString(), aggregate);
+});
+```
+
+Append to `test/config.test.js`:
+
+```javascript
+test('chiseled geometry is the default', () => {
+  assert.equal(resolveConfig().face.geometry, 'chiseled');
+});
+
+test('smooth geometry remains configurable', () => {
+  assert.equal(
+    resolveConfig({ face: { geometry: 'smooth' } }).face.geometry,
+    'smooth',
+  );
+});
+```
+
+- [ ] **Step 2: Run focused tests and confirm failures**
+
+Run: `node --test --test-name-pattern="smooth geometry|known geometry|head geometry|geometry is" test/*.test.js`
+
+Expected: FAIL because `smoothHeadDistance`, `setGeometry`, and the config key do not exist.
+
+- [ ] **Step 3: Add the scalar smooth distance and model switch**
+
+Add to `src/face/face-model.js`:
+
+```javascript
+export function smoothHeadDistance(u, v, mouthOpen = 0, jawSharp = 0.5) {
+  const skull = Math.hypot(u / 0.62, (v + 0.32) / 0.64) - 1;
+  if (v <= -0.15) return skull;
+  const corner = 0.42 + 0.08 * jawSharp;
+  let width;
+  if (v < 0.44) {
+    const t = (v + 0.15) / 0.59;
+    width = 0.60 + t * (corner - 0.60);
+  } else {
+    const chin = 1.0 + mouthOpen * 0.05;
+    const t = Math.max(0, Math.min(1, (v - 0.44) / (chin - 0.44)));
+    width = corner + Math.pow(t, 1.3 + 1.1 * jawSharp) * (0.08 - corner);
+  }
+  const chin = 1.0 + mouthOpen * 0.05;
+  const jaw = Math.max((Math.abs(u) - width) / 0.35, (v - chin) / 0.18);
+  return Math.min(skull, jaw);
+}
+```
+
+Change the constructor and add the setter:
+
+```javascript
+constructor(geometry = 'chiseled') {
+  this.geometry = geometry === 'smooth' ? 'smooth' : 'chiseled';
+  this.grid = null;
+  this.u = null;
+  this.v = null;
+  this.noise = null;
+}
+
+setGeometry(style) {
+  if (style === 'chiseled' || style === 'smooth') this.geometry = style;
+  return this.geometry;
+}
+```
+
+In `fill`, use `smoothHeadDistance(u0, v1, dyn.mouthOpen, p.jawSharp)` for `smooth`. Keep the current scalar crown and piecewise width calculation for `chiseled`. Neither path may allocate arrays or objects per cell.
+
+- [ ] **Step 4: Add configuration and public controls**
+
+Add to `src/config.js`:
+
+```javascript
+// 'chiseled' | 'smooth'
+geometry: 'chiseled',
+```
+
+Construct `FaceModel` with `this.config.face.geometry`. Add to `CodefallFace`:
+
+```javascript
+setGeometry(style) {
+  this.geometry = this.model.setGeometry(style);
+  document.body.dataset.geometry = this.geometry;
+  this.emit('geometry', { geometry: this.geometry });
+  return this.geometry;
+}
+
+toggleGeometry() {
+  return this.setGeometry(this.geometry === 'chiseled' ? 'smooth' : 'chiseled');
+}
+```
+
+Initialize `this.geometry` and `document.body.dataset.geometry` from the model after construction.
+
+- [ ] **Step 5: Add the clickable control**
+
+Add beside `theme-toggle` in `index.html`:
+
+```html
+<button id="geometry-toggle" class="btn ghost" aria-label="Face geometry: chiseled"
+        aria-pressed="false" title="Face geometry: chiseled">◇</button>
+```
+
+Add to `src/main.js`:
+
+```javascript
+const geometryBtn = $('#geometry-toggle');
+function syncGeometryButton() {
+  const smooth = face.geometry === 'smooth';
+  geometryBtn.textContent = smooth ? '○' : '◇';
+  geometryBtn.setAttribute('aria-pressed', String(smooth));
+  geometryBtn.setAttribute('aria-label', `Face geometry: ${face.geometry}`);
+  geometryBtn.title = `Face geometry: ${face.geometry}`;
+}
+geometryBtn.onclick = () => {
+  face.toggleGeometry();
+  syncGeometryButton();
+  debugLog(`geometry → ${face.geometry}`);
+};
+syncGeometryButton();
+```
+
+- [ ] **Step 6: Document and verify the toggle**
+
+Add to `README.md`:
+
+```markdown
+Use the ◇ geometry button to switch between the default chiseled host and the
+rounded smooth host. Both modes use the same tile skin, expressions, speech
+animation, possession effects, and allocation-free scalar geometry.
+```
+
+Run: `npm test`
+
+Expected: all tests pass.
+
+Run `python3 -m http.server 8000` and open `http://localhost:8000/?theme=wintermute`. Click the ◇/○ control and verify the outline changes without resetting speech, emotion, gaze, or possession state.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/face/face-model.js src/codefall-face.js src/config.js src/main.js index.html README.md test/face-model.test.js test/config.test.js
+git commit -m "feat: toggle face geometry"
+```
+
+---
+
+### Task 8: Run visual and regression verification
 
 **Files:**
 - Modify if verification finds a defect: `src/face/face-model.js`, `src/face/renderer.js`, `src/face/glyphs.js`, or `styles.css`
@@ -855,13 +1043,13 @@ git commit -m "feat: finish wintermute face treatment"
 - Consumes the complete face renderer.
 - Produces verified screenshots for review; do not commit the user's reference images.
 
-- [ ] **Step 1: Run the automated suite**
+- [x] **Step 1: Run the automated suite**
 
 Run: `npm test`
 
 Expected: 17 tests pass with zero failures.
 
-- [ ] **Step 2: Check syntax for browser modules**
+- [x] **Step 2: Check syntax for browser modules**
 
 Run:
 
@@ -901,12 +1089,13 @@ Capture one possession event and one low-coherence frame. Confirm:
 Check:
 
 - `?theme=codefall` retains the green glyph treatment
+- the ◇/○ control switches between chiseled and smooth outlines while both modes retain tile skin and expression
 - reduced-motion removes displacement, duplicates, flashing, and debris bursts
 - high, medium, and low quality retain the human silhouette
 - resize during idle and possession does not throw or leave stale bands
 - voice playback, lip sync, emotion changes, blink, gaze, and boot assembly work
 
-- [ ] **Step 6: Fix any observed defect and rerun the relevant check**
+- [x] **Step 6: Fix any observed defect and rerun the relevant check**
 
 Keep fixes within the approved design. Add a regression assertion to the closest test file for any geometry, scheduling, configuration, or bound defect.
 
