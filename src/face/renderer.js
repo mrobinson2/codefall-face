@@ -30,11 +30,23 @@ const QUALITY = {
 
 export function ringSegments(time, reducedMotion, breach = 0) {
   const drift = reducedMotion ? 0 : Math.sin(time * 0.08) * 0.035;
-  const gap = 0.54 + breach * 0.22;
+  const rightGap = Math.PI * (0.78 + breach * 0.22);
+  const secondaryBreak = Math.PI * 0.09;
+  const secondaryCenter = Math.PI * 1.425;
   return [
-    { start: -Math.PI * 0.42 + drift, end: Math.PI * (1.38 - gap) + drift },
-    { start: Math.PI * (1.47 + gap * 0.2) - drift, end: Math.PI * 1.76 - drift },
+    {
+      start: rightGap * 0.5 + drift,
+      end: secondaryCenter - secondaryBreak * 0.5 + drift,
+    },
+    {
+      start: secondaryCenter + secondaryBreak * 0.5 + drift,
+      end: Math.PI * 2 - rightGap * 0.5 + drift,
+    },
   ];
+}
+
+export function shouldRefreshWintermuteGlyph(dirty, themeName, reg) {
+  return dirty && themeName === 'wintermute' && reg !== REGION.VOID;
 }
 
 export function rowOffset(row, possession) {
@@ -102,6 +114,7 @@ export class CodefallRenderer {
     this.region = new Uint8Array(n);
     this.sdf = new Float32Array(n);
     this.material = new Uint8Array(n);
+    this._wintermuteGlyphsDirty = this.theme.name === 'wintermute';
     this.glyph = new Uint16Array(n); // atlas index per cell
     this.churnPhase = new Float32Array(n);
     for (let i = 0; i < n; i++) {
@@ -134,6 +147,7 @@ export class CodefallRenderer {
 
   setTheme(name) {
     this.theme = THEMES[name] || THEMES.codefall;
+    this._wintermuteGlyphsDirty = this.theme.name === 'wintermute';
     this.buildAtlas(this.hueShift);
   }
 
@@ -297,17 +311,21 @@ export class CodefallRenderer {
             if (dHead < 1) b += 0.15;
           }
         }
-        if (b <= 0.02) continue;
+        const forceGlyphRefresh = shouldRefreshWintermuteGlyph(
+          this._wintermuteGlyphsDirty, this.theme.name, reg
+        );
+        const visible = b > 0.02;
+        if (!visible && !forceGlyphRefresh) continue;
 
         // Flicker
-        if (flick && Math.random() < flick * 0.3) b *= 0.4;
+        if (visible && flick && Math.random() < flick * 0.3) b *= 0.4;
 
         // Glyph churn: near rain heads, in turbulent regions, or randomly
         const churn =
           churnBase +
           (dHead >= 0 && dHead < 2 ? 0.8 : 0) +
           (reg === REGION.MOUTH_INNER ? dyn.energy * 0.5 : 0);
-        if (Math.random() < churn * dt * 12) {
+        if (forceGlyphRefresh || (visible && Math.random() < churn * dt * 12)) {
           let gx = 0, gy = 0;
           if (reg === REGION.EDGE) {
             const L = c > 0 ? this.sdf[i - 1] : this.sdf[i];
@@ -322,6 +340,8 @@ export class CodefallRenderer {
             reg, mat, Math.min(1, b), gx, gy, rainChar, this.churnPhase[i]
           );
         }
+
+        if (!visible) continue;
 
         if (this.theme.name === 'wintermute') {
           if (mat === MATERIAL.SEAM) b *= 0.5;
@@ -338,6 +358,7 @@ export class CodefallRenderer {
         );
       }
     }
+    this._wintermuteGlyphsDirty = false;
 
     // ---- disintegration debris: the face crumbles off its lower edge ---
     this._updateDebris(dt, p, dyn, ctx);
