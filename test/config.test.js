@@ -9,3 +9,14 @@ test('wintermute is the default face theme', () => {
 test('codefall remains selectable', () => {
   assert.equal(resolveConfig({ face: { theme: 'codefall' } }).face.theme, 'codefall');
 });
+
+test('chiseled geometry is the default', () => {
+  assert.equal(resolveConfig().face.geometry, 'chiseled');
+});
+
+test('smooth geometry remains configurable', () => {
+  assert.equal(
+    resolveConfig({ face: { geometry: 'smooth' } }).face.geometry,
+    'smooth',
+  );
+});

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { headHalfWidth, classifyFaceMaterial } from '../src/face/face-model.js';
+import {
+  FaceModel,
+  headHalfWidth,
+  classifyFaceMaterial,
+  smoothHeadDistance,
+} from '../src/face/face-model.js';
 import { MATERIAL, REGION } from '../src/face/glyphs.js';
 
 test('head width creates temple, cheek, jaw, and chin breaks', () => {
@@ -40,4 +45,22 @@ test('eye and mouth anatomy receives fine material', () => {
 
 test('temple port receives aperture material', () => {
   assert.equal(classifyFaceMaterial(0.49, 0.12, 0.9, REGION.FACE), MATERIAL.APERTURE);
+});
+
+test('smooth geometry has a rounded temple and tapered jaw', () => {
+  assert.ok(smoothHeadDistance(0.5, -0.45, 0, 0.5) < 0);
+  assert.ok(smoothHeadDistance(0.5, 0.72, 0, 0.5) > 0);
+});
+
+test('FaceModel accepts only known geometry styles', () => {
+  const model = new FaceModel('chiseled');
+  assert.equal(model.setGeometry('smooth'), 'smooth');
+  assert.equal(model.geometry, 'smooth');
+  assert.equal(model.setGeometry('wireframe'), 'smooth');
+});
+
+test('both head geometry helpers avoid per-call arrays', () => {
+  const aggregate = /(?:=\s*\[|new\s+Array\s*\()/;
+  assert.doesNotMatch(smoothHeadDistance.toString(), aggregate);
+  assert.doesNotMatch(headHalfWidth.toString(), aggregate);
 });

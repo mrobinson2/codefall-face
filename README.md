@@ -22,6 +22,10 @@ ghost inside a broken neon halo. Both share the same procedural face;
 only palette, glyph vocabulary, halo intensity, and rain density change.
 The ▾ button minimizes the control console.
 
+Use the ◇ geometry button to switch between the default chiseled host and the
+rounded smooth host. Both modes use the same tile skin, expressions, speech
+animation, possession effects, and allocation-free scalar geometry.
+
 | Codefall | Wintermute (default) |
 |---|---|
 | ![Codefall theme](assets/codefall-theme.png) | ![Wintermute theme](assets/wintermute-theme.png) |
@@ -197,10 +201,13 @@ face.startListening();
 face.stopListening();
 face.interrupt();                 // ghost visibly destabilizes
 face.setMuted(true);
+face.setGeometry('smooth');       // chiseled (default)|smooth
+face.toggleGeometry();            // switch between the two geometries
 
 face.on('state',      ({ state }) => {});  // idle|listening|thinking|speaking|interrupted|error
 face.on('transcript', ({ role, text, final }) => {});
 face.on('emotion',    ({ emotion }) => {});
+face.on('geometry',   ({ geometry }) => {});
 face.on('error',      ({ message }) => {});
 ```
 

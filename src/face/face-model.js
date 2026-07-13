@@ -53,6 +53,24 @@ export function headHalfWidth(v, mouthOpen = 0, jawSharp = 0.5) {
   return chinW;
 }
 
+export function smoothHeadDistance(u, v, mouthOpen = 0, jawSharp = 0.5) {
+  const skull = Math.hypot(u / 0.62, (v + 0.32) / 0.64) - 1;
+  if (v <= -0.15) return skull;
+  const corner = 0.42 + 0.08 * jawSharp;
+  let width;
+  if (v < 0.44) {
+    const t = (v + 0.15) / 0.59;
+    width = 0.60 + t * (corner - 0.60);
+  } else {
+    const chin = 1.0 + mouthOpen * 0.05;
+    const t = Math.max(0, Math.min(1, (v - 0.44) / (chin - 0.44)));
+    width = corner + Math.pow(t, 1.3 + 1.1 * jawSharp) * (0.08 - corner);
+  }
+  const chin = 1.0 + mouthOpen * 0.05;
+  const jaw = Math.max((Math.abs(u) - width) / 0.35, (v - chin) / 0.18);
+  return Math.min(skull, jaw);
+}
+
 export function classifyFaceMaterial(u, v, noise, region) {
   if (region === REGION.EYE || region === REGION.MOUTH || region === REGION.NOSE) {
     return MATERIAL.FINE;
@@ -66,11 +84,17 @@ export function classifyFaceMaterial(u, v, noise, region) {
 }
 
 export class FaceModel {
-  constructor() {
+  constructor(geometry = 'chiseled') {
+    this.geometry = geometry === 'smooth' ? 'smooth' : 'chiseled';
     this.grid = null;
     this.u = null; // per-col normalized x
     this.v = null; // per-row normalized y
     this.noise = null; // static per-cell hash noise, rebuilt on resize
+  }
+
+  setGeometry(style) {
+    if (style === 'chiseled' || style === 'smooth') this.geometry = style;
+    return this.geometry;
   }
 
   setGrid(grid) {
@@ -160,14 +184,19 @@ export class FaceModel {
         const v1 = v0 + (N[(i * 7 + 13) % N.length] - 0.5) * scatter;
 
         // ---- head SDF -----------------------------------------------
-        const vChin = 1.0 + dyn.mouthOpen * 0.05;
-        const top = -0.86;
-        const bottomDistance = (v1 - vChin) / 0.16;
-        const halfWidth = headHalfWidth(v1, dyn.mouthOpen, p.jawSharp);
-        const sideDistance = (Math.abs(u0) - halfWidth) / 0.28;
-        let d = Math.max(sideDistance, bottomDistance, (top - v1) / 0.16);
-        const crown = Math.hypot(u0 / 0.48, (v1 + 0.6) / 0.32) - 1;
-        if (v1 < -0.42) d = Math.min(d, crown);
+        let d;
+        if (this.geometry === 'smooth') {
+          d = smoothHeadDistance(u0, v1, dyn.mouthOpen, p.jawSharp);
+        } else {
+          const vChin = 1.0 + dyn.mouthOpen * 0.05;
+          const top = -0.86;
+          const bottomDistance = (v1 - vChin) / 0.16;
+          const halfWidth = headHalfWidth(v1, dyn.mouthOpen, p.jawSharp);
+          const sideDistance = (Math.abs(u0) - halfWidth) / 0.28;
+          d = Math.max(sideDistance, bottomDistance, (top - v1) / 0.16);
+          const crown = Math.hypot(u0 / 0.48, (v1 + 0.6) / 0.32) - 1;
+          if (v1 < -0.42) d = Math.min(d, crown);
+        }
 
         sdf[i] = d;
 
