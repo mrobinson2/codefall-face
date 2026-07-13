@@ -22,24 +22,35 @@
 import { MATERIAL, REGION } from './glyphs.js';
 
 export function headHalfWidth(v, mouthOpen = 0, jawSharp = 0.5) {
-  const points = [
-    [-0.82, 0.42],
-    [-0.55, 0.52],
-    [-0.08, 0.62],
-    [0.38, 0.48 + jawSharp * 0.035],
-    [0.68, 0.34],
-    [1.0 + mouthOpen * 0.05, 0.09],
-  ];
-  if (v <= points[0][0]) return points[0][1];
-  for (let i = 1; i < points.length; i++) {
-    if (v <= points[i][0]) {
-      const [v0, w0] = points[i - 1];
-      const [v1, w1] = points[i];
-      const t = (v - v0) / (v1 - v0);
-      return w0 + (w1 - w0) * t;
-    }
+  const templeTopV = -0.82, templeTopW = 0.42;
+  const templeV = -0.55, templeW = 0.52;
+  const cheekV = -0.08, cheekW = 0.62;
+  const jawV = 0.38, jawW = 0.48 + jawSharp * 0.035;
+  const chinBreakV = 0.68, chinBreakW = 0.34;
+  const chinV = 1.0 + mouthOpen * 0.05, chinW = 0.09;
+
+  if (v <= templeTopV) return templeTopW;
+  if (v <= templeV) {
+    const t = (v - templeTopV) / (templeV - templeTopV);
+    return templeTopW + (templeW - templeTopW) * t;
   }
-  return points[points.length - 1][1];
+  if (v <= cheekV) {
+    const t = (v - templeV) / (cheekV - templeV);
+    return templeW + (cheekW - templeW) * t;
+  }
+  if (v <= jawV) {
+    const t = (v - cheekV) / (jawV - cheekV);
+    return cheekW + (jawW - cheekW) * t;
+  }
+  if (v <= chinBreakV) {
+    const t = (v - jawV) / (chinBreakV - jawV);
+    return jawW + (chinBreakW - jawW) * t;
+  }
+  if (v <= chinV) {
+    const t = (v - chinBreakV) / (chinV - chinBreakV);
+    return chinBreakW + (chinW - chinBreakW) * t;
+  }
+  return chinW;
 }
 
 export function classifyFaceMaterial(u, v, noise, region) {
