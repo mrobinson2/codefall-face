@@ -20,8 +20,13 @@
 import { resolveConfig } from './config.js';
 import { FaceModel } from './face/face-model.js';
 import { CodefallRenderer } from './face/renderer.js';
-import { EMOTIONS, NEUTRAL, blendParams } from './face/emotions.js';
+import { EMOTIONS } from './face/emotions.js';
 import { SpeechEngine } from './speech/speech-engine.js';
+import { FaceRuntime } from './runtime/face-runtime.js';
+import { createRandomStreams } from './runtime/random.js';
+import { BrowserPlatform } from './platform/browser-platform.js';
+import { ProviderManager } from './voice/provider-manager.js';
+import { AgentChannel } from './agent/agent-channel.js';
 import { LocalSpeechAdapter } from './voice/local-speech.js';
 import { AzureVoiceLiveAdapter } from './voice/azure-voice-live.js';
 import { LacyAdapter } from './voice/lacy.js';
@@ -39,62 +44,131 @@ const CANNED = [
 ];
 
 export class CodefallFace extends EventTarget {
-  constructor(container, userConfig = {}) {
+  constructor(container, userConfig = {}, internals = {}) {
     super();
+    if (!container || typeof container.appendChild !== 'function') {
+      throw new TypeError('CodefallFace requires a container element');
+    }
     this.config = resolveConfig(userConfig);
     this.container = container;
+    this.platform = internals.platform || new BrowserPlatform();
+    this._destroyed = false;
+    this._visibilityPaused = false;
+    this._providerFactories = internals.providerFactories || {
+      azure: AzureVoiceLiveAdapter,
+      piper: PiperAdapter,
+      lacy: LacyAdapter,
+      local: LocalSpeechAdapter,
+    };
 
     // ---- visual stack -------------------------------------------------
-    this.canvas = document.createElement('canvas');
+    this.canvas = this.platform.document.createElement('canvas');
     this.canvas.className = 'codefall-canvas';
     container.appendChild(this.canvas);
 
     const rm = this.config.face.reducedMotion;
     this.reducedMotion =
       rm === 'auto'
-        ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? this.platform.matchMedia('(prefers-reduced-motion: reduce)').matches
         : !!rm;
+    this.motionPolicy = rm === 'auto' ? 'system' : this.reducedMotion ? 'reduce' : 'full';
 
-    this.model = new FaceModel(this.config.face.geometry);
-    this.renderer = new CodefallRenderer(this.canvas, this.model, {
+    const seed = internals.randomSeed ?? this.config.face.seed ??
+      Math.floor(this.platform.random() * 0x100000000);
+    this.randomStreams = createRandomStreams(seed);
+    const Model = internals.modelFactory || ((geometry) => new FaceModel(geometry));
+    this.model = Model(this.config.face.geometry);
+    const makeRenderer = internals.rendererFactory ||
+      ((canvas, model, options) => new CodefallRenderer(canvas, model, options));
+    this.renderer = makeRenderer(this.canvas, this.model, {
       quality: this.config.face.quality,
       reducedMotion: this.reducedMotion,
       theme: this.config.face.theme,
+      platform: this.platform,
+      streams: this.randomStreams,
     });
+    this._rendererQualityEvents = typeof this.renderer.addEventListener === 'function';
+    if (this._rendererQualityEvents) {
+      this.renderer.addEventListener('qualitychange', (event) =>
+        this.emit('quality', event.detail));
+    }
     this.theme = this.renderer.theme.name;
-    document.body.dataset.theme = this.theme;
     this.geometry = this.model.geometry;
-    document.body.dataset.geometry = this.geometry;
-    this.engine = new SpeechEngine();
+    this._writeDataset('theme', this.theme);
+    this._writeDataset('geometry', this.geometry);
+    this.engine = internals.speechEngine || new SpeechEngine(this.randomStreams.speech);
 
     // ---- expressive state ----------------------------------------------
-    this.params = { ...NEUTRAL };
+    const makeRuntime = internals.runtimeFactory || ((options) => new FaceRuntime(options));
+    this.runtime = makeRuntime({
+      config: {
+        ...this.config,
+        face: { ...this.config.face, reducedMotion: this.reducedMotion },
+      },
+      speech: this.engine,
+      streams: this.randomStreams,
+      rows: this.renderer.rows || 1,
+    });
+    this.params = this.runtime.params;
     this.targetEmotion = 'neutral';
-    this.state = 'booting';
+    this.state = this.runtime.state;
     this.coherence = 0;
     this._targetCoherence = 1;
-    this._gaze = { x: 0, y: 0, tx: 0, ty: 0, timer: 0 };
+    this._gaze = this.runtime.gaze.output;
     this.adapter = null;
     this.muted = false;
+    this.runtime.addEventListener('state', (event) => {
+      this.state = event.detail.state;
+      this._writeDataset('state', this.state);
+      this.emit('state', { state: this.state });
+    });
+    this.runtime.addEventListener('diagnostic', (event) =>
+      this.emit('diagnostic', event.detail));
+    this.runtime.addEventListener('visualevent', (event) =>
+      this.emit('visualevent', event.detail));
+
+    this.providerManager = new ProviderManager({
+      config: this.config,
+      factories: this._providerFactories,
+    });
+    this._wireAdapter(this.providerManager);
+    this.providerManager.addEventListener('provider', (event) => {
+      this.adapter = event.detail.adapter;
+      if (this.muted) this.adapter.setMuted(true);
+      this.emit('provider', { name: event.detail.name });
+      this._setState('idle');
+    });
+    this.providerManager.addEventListener('capabilities', (event) =>
+      this.emit('capabilities', event.detail));
+    this.agentChannel = new AgentChannel({
+      platform: this.platform,
+      random: this.randomStreams.agent,
+      dispatchCommand: (command) => this._dispatchAgentCommand(command),
+      getSnapshot: () => this.getSnapshot(),
+    });
 
     // ---- lifecycle -------------------------------------------------------
     this._onResize = () => this.renderer.resize();
-    window.addEventListener('resize', this._onResize);
+    this._onVisibility = () => this._handleVisibility();
+    this.platform.window.addEventListener('resize', this._onResize);
+    this.platform.document.addEventListener('visibilitychange', this._onVisibility);
     this._raf = null;
-    this._last = performance.now();
+    this._last = this.platform.now();
     this._loop = this._loop.bind(this);
-    this._raf = requestAnimationFrame(this._loop);
+    this._scheduleFrame();
 
-    this.ready = this._initProvider();
+    this.ready = this.providerManager.start(this.config.provider);
   }
 
   // ======================= public API ==================================
 
   /** Speak text with an optional emotion applied for the duration. */
   async speak(text, emotion = null, opts = {}) {
+    this._requireLive();
     if (!text || !text.trim()) return;
     if (emotion) this.setEmotion(emotion);
     await this.ready;
+    this._requireLive();
     this._setState('speaking');
     this.emit('transcript', { role: 'agent', text, final: true });
     try {
@@ -106,7 +180,9 @@ export class CodefallFace extends EventTarget {
 
   /** Conversational turn: send text, get a spoken reply (if the provider has a brain). */
   async ask(text) {
+    this._requireLive();
     await this.ready;
+    this._requireLive();
     // via:'api' marks this as an already-routed turn — distinguishes it
     // from adapter STT transcripts so UI glue doesn't re-route it into
     // ask() again (that loop hard-locks the page).
@@ -124,27 +200,33 @@ export class CodefallFace extends EventTarget {
     }
     // Local: no model behind it — canned persona response, honestly canned.
     this._setState('thinking');
-    await new Promise((r) => setTimeout(r, 500 + Math.random() * 700));
-    const line = CANNED[(Math.random() * CANNED.length) | 0];
+    await new Promise((resolve) =>
+      this.platform.setTimeout(resolve, 500 + this.randomStreams.persona() * 700));
+    const line = CANNED[(this.randomStreams.persona() * CANNED.length) | 0];
     await this.speak(line);
     return line;
   }
 
   setEmotion(name) {
+    if (this._destroyed) return false;
     if (!EMOTIONS[name]) {
       this.emit('error', { message: `unknown emotion: ${name}` });
-      return;
+      return false;
     }
+    this.runtime.command({ type: 'emotion', value: name });
     this.targetEmotion = name;
     this.emit('emotion', { emotion: name });
+    return true;
   }
 
   async startListening() {
+    this._requireLive();
     await this.ready;
     await this.adapter.startListening();
   }
 
   async stopListening() {
+    this._requireLive();
     await this.ready;
     await this.adapter.stopListening();
     if (this.state === 'listening') this._setState('idle');
@@ -152,40 +234,127 @@ export class CodefallFace extends EventTarget {
 
   /** Hard-stop speech. The ghost visibly destabilizes when cut off. */
   interrupt() {
+    if (this._destroyed) return false;
     if (this.adapter) this.adapter.interrupt();
-    this.engine.setSpeaking(false);
-    this.coherence = Math.min(this.coherence, 0.45);
-    this._setState('interrupted');
-    setTimeout(() => {
-      if (this.state === 'interrupted') this._setState('idle');
-    }, 700);
+    return this.runtime.command({ type: 'interrupt' });
   }
 
   setMuted(m) {
+    if (this._destroyed) return false;
     this.muted = m;
     if (this.adapter) this.adapter.setMuted(m);
+    return true;
   }
 
   /** Switch visual theme: 'codefall' | 'wintermute'. */
   setTheme(name) {
+    if (this._destroyed) return this.theme;
     this.renderer.setTheme(name);
     this.theme = this.renderer.theme.name;
-    document.body.dataset.theme = this.theme;
+    this._writeDataset('theme', this.theme);
     this.emit('theme', { theme: this.theme });
   }
 
   setGeometry(style) {
+    if (this._destroyed) return this.geometry;
     const geometry = this.model.setGeometry(style);
     if (geometry === this.geometry) return this.geometry;
     this.geometry = geometry;
     this.renderer.invalidateGeometry();
-    document.body.dataset.geometry = this.geometry;
+    this._writeDataset('geometry', this.geometry);
     this.emit('geometry', { geometry: this.geometry });
     return this.geometry;
   }
 
   toggleGeometry() {
     return this.setGeometry(this.geometry === 'chiseled' ? 'smooth' : 'chiseled');
+  }
+
+  pause() {
+    if (this._destroyed) return false;
+    const changed = this.runtime.command({ type: 'pause' });
+    if (changed && this._raf != null) {
+      this.platform.cancelAnimationFrame(this._raf);
+      this._raf = null;
+    }
+    return changed;
+  }
+
+  resume() {
+    if (this._destroyed) return false;
+    const changed = this.runtime.command({ type: 'resume' });
+    if (changed) {
+      this._last = this.platform.now();
+      this._scheduleFrame();
+    }
+    return changed;
+  }
+
+  setQuality(policy) {
+    if (this._destroyed) return false;
+    if (!['auto', 'high', 'medium', 'low'].includes(policy)) {
+      this.emit('diagnostic', { code: 'invalid-quality', value: policy });
+      return false;
+    }
+    if (typeof this.renderer.setQuality === 'function') this.renderer.setQuality(policy);
+    if (!this._rendererQualityEvents) {
+      this.emit('quality', { policy, tier: this.renderer.quality || policy, reason: 'api' });
+    }
+    return true;
+  }
+
+  setVisualIntensity(value) {
+    if (this._destroyed || !Number.isFinite(value)) {
+      if (!this._destroyed) this.emit('diagnostic', { code: 'invalid-visual-intensity', value });
+      return false;
+    }
+    return this.runtime.command({ type: 'visual-intensity', value });
+  }
+
+  setMotionPolicy(policy) {
+    if (this._destroyed) return false;
+    if (!['system', 'reduce', 'full'].includes(policy)) {
+      this.emit('diagnostic', { code: 'invalid-motion-policy', value: policy });
+      return false;
+    }
+    const reduced = policy === 'reduce' || (policy === 'system' &&
+      this.platform.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    this.motionPolicy = policy;
+    this.reducedMotion = reduced;
+    this.runtime.command({ type: 'reduced-motion', value: reduced });
+    this.renderer.reducedMotion = reduced;
+    this.emit('motion', { policy, reduced });
+    return true;
+  }
+
+  retryProvider() {
+    this._requireLive();
+    this.ready = this.providerManager.retry();
+    return this.ready;
+  }
+
+  getSnapshot() {
+    return {
+      lifecycle: this.state,
+      provider: {
+        ...this.providerManager.getSnapshot(),
+      },
+      face: {
+        theme: this.theme,
+        geometry: this.geometry,
+        emotion: this.targetEmotion,
+        coherence: this.coherence,
+      },
+      rendering: {
+        policy: this.renderer.qualityName || this.config.face.quality,
+        tier: this.renderer.quality || this.config.face.quality,
+        fps: this.renderer.fps || 0,
+        reducedMotion: this.reducedMotion,
+        motionPolicy: this.motionPolicy,
+        visualIntensity: this.runtime.events.intensity,
+      },
+      connection: { agent: this.agentChannel?.getSnapshot().status || 'detached' },
+    };
   }
 
   /**
@@ -202,115 +371,53 @@ export class CodefallFace extends EventTarget {
    *   { type:'error', message }
    */
   attachAgentSocket(url, { reconnect = true } = {}) {
-    // Accept a bare path ('/agent-hub') and resolve it same-origin.
-    if (url.startsWith('/')) {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      url = `${proto}://${location.host}${url}`;
-    }
-    if (!this._agentEventsWired) {
-      this._agentEventsWired = true;
-      for (const t of ['transcript', 'state', 'emotion', 'error']) {
-        this.addEventListener(t, (e) => {
-          const ws = this._agentWs;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: t, ...e.detail }));
-          }
-        });
-      }
-    }
-    const connect = () => {
-      const ws = new WebSocket(url);
-      this._agentWs = ws;
-      ws.onopen = () =>
-        ws.send(JSON.stringify({ type: 'hello', client: 'codefall-face', state: this.state }));
-      ws.onmessage = (e) => {
-        let m;
-        try { m = JSON.parse(e.data); } catch { return; }
-        switch (m.type) {
-          case 'speak': this.speak(m.text, m.emotion || null); break;
-          case 'ask': this.ask(m.text); break;
-          case 'emotion': this.setEmotion(m.emotion); break;
-          case 'listen': m.on ? this.startListening() : this.stopListening(); break;
-          case 'interrupt': this.interrupt(); break;
-          case 'mute': this.setMuted(!!m.muted); break;
-          case 'theme': this.setTheme(m.theme); break;
-        }
-      };
-      ws.onclose = () => {
-        if (reconnect && this._agentWs === ws) {
-          setTimeout(connect, 2000 + Math.random() * 1000);
-        }
-      };
-      ws.onerror = () => { /* onclose handles retry */ };
-    };
-    connect();
+    this._requireLive();
+    return this.agentChannel.attach(url, { reconnect });
   }
 
   detachAgentSocket() {
-    const ws = this._agentWs;
-    this._agentWs = null;
-    if (ws) { try { ws.close(); } catch { /* ok */ } }
+    return this.agentChannel.detach();
   }
 
   /** Switch provider at runtime: 'azure' | 'lacy' | 'local'. */
   async setProvider(name) {
-    if (this.adapter) this.adapter.destroy();
-    this.adapter = null;
-    this.ready = this._initProvider(name);
+    this._requireLive();
+    this.ready = this.providerManager.switchTo(name);
     return this.ready;
   }
 
-  on(type, cb) { this.addEventListener(type, (e) => cb(e.detail)); }
-  emit(type, detail = {}) { this.dispatchEvent(new CustomEvent(type, { detail })); }
+  on(type, cb) {
+    const listener = (event) => cb(event.detail);
+    this.addEventListener(type, listener);
+    return () => this.removeEventListener(type, listener);
+  }
+
+  emit(type, detail = {}) {
+    const EventCtor = this.platform?.window?.CustomEvent || globalThis.CustomEvent;
+    const event = EventCtor
+      ? new EventCtor(type, { detail })
+      : Object.assign(new Event(type), { detail });
+    this.dispatchEvent(event);
+    this.agentChannel?.publish(type, detail);
+  }
 
   destroy() {
-    cancelAnimationFrame(this._raf);
-    window.removeEventListener('resize', this._onResize);
-    if (this.adapter) this.adapter.destroy();
+    if (this._destroyed) return false;
+    this._destroyed = true;
+    if (this._raf != null) this.platform.cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this.platform.window.removeEventListener('resize', this._onResize);
+    this.platform.document.removeEventListener('visibilitychange', this._onVisibility);
+    this.agentChannel.destroy();
+    this.providerManager.destroy();
+    this.adapter = null;
+    this.runtime.destroy();
+    if (typeof this.renderer.destroy === 'function') this.renderer.destroy();
     this.canvas.remove();
+    return true;
   }
 
   // ======================= internals ====================================
-
-  async _initProvider(forced = null) {
-    const want = forced || this.config.provider;
-    const attempts = [];
-    if (want === 'auto') attempts.push('azure', 'piper', 'local');
-    else attempts.push(want);
-
-    for (const name of attempts) {
-      const Adapter = {
-        azure: AzureVoiceLiveAdapter,
-        piper: PiperAdapter,
-        lacy: LacyAdapter,
-        local: LocalSpeechAdapter,
-      }[name];
-      if (!Adapter) continue;
-      const adapter = new Adapter(this.config);
-      try {
-        this._wireAdapter(adapter);
-        await adapter.init();
-        this.adapter = adapter;
-        this.emit('provider', { name });
-        this._setState('idle');
-        return adapter;
-      } catch (err) {
-        adapter.destroy();
-        if (attempts.length === 1) {
-          this._setState('error');
-          this.emit('error', { message: `${name}: ${err.message}` });
-          throw err;
-        }
-      }
-    }
-    // Nothing viable — face still renders; voice is silent-animate only.
-    this.adapter = new LocalSpeechAdapter(this.config);
-    this._wireAdapter(this.adapter);
-    this.adapter.setMuted(true);
-    this.emit('provider', { name: 'silent' });
-    this._setState('idle');
-    return this.adapter;
-  }
 
   _wireAdapter(adapter) {
     adapter.addEventListener('speechstart', () => {
@@ -335,69 +442,80 @@ export class CodefallFace extends EventTarget {
       this.emit('error', e.detail);
       if (e.detail.fatal) this._setState('error');
       // Error: the signal degrades visibly.
-      this.coherence = Math.min(this.coherence, 0.6);
+      this.runtime.command({ type: 'coherence', value: Math.min(this.coherence, 0.6) });
     });
+  }
+
+  _dispatchAgentCommand(command) {
+    switch (command.type) {
+      case 'speak': return this.speak(command.text, command.emotion || null);
+      case 'ask': return this.ask(command.text);
+      case 'emotion': return this.setEmotion(command.emotion);
+      case 'listen': return command.on ? this.startListening() : this.stopListening();
+      case 'interrupt': return this.interrupt();
+      case 'mute': return this.setMuted(command.muted);
+      case 'theme': return this.setTheme(command.theme);
+      case 'geometry': return this.setGeometry(command.geometry);
+      case 'quality': return this.setQuality(command.quality);
+      case 'visual-intensity': return this.setVisualIntensity(command.value);
+      default: return false;
+    }
   }
 
   _setState(state) {
-    if (this.state === state) return;
-    this.state = state;
-    this.emit('state', { state });
+    if (this._destroyed || this.state === state) return false;
+    return this.runtime.command({ type: 'provider-state', value: state });
   }
 
   _loop(now) {
-    this._raf = requestAnimationFrame(this._loop);
+    this._raf = null;
+    if (this._destroyed || this.runtime.state === 'paused' || this.platform.document.hidden) return;
     let dt = (now - this._last) / 1000;
     this._last = now;
     if (dt > 0.1) dt = 0.1; // tab was hidden — don't lurch
-    if (document.hidden) return;
+    const frame = this.runtime.tick(Math.max(0, dt));
+    this.params = frame.params;
+    this.state = this.runtime.state;
+    this.targetEmotion = this.runtime.targetEmotion;
+    this.coherence = frame.dyn.coherence;
+    this._targetCoherence = this.runtime.targetCoherence;
+    this._gaze = this.runtime.gaze.output;
+    this.renderer.render(dt, frame);
+    this._scheduleFrame();
+  }
 
-    // Boot assembly: the face condenses out of the rain.
-    const bootRate = 1 / Math.max(0.5, this.config.face.bootDuration);
-    this.coherence += (this._targetCoherence - this.coherence) *
-      Math.min(1, (this.state === 'booting' ? bootRate * 1.6 : 2.2) * dt);
-    if (this.state === 'booting' && this.coherence > 0.92) this._setState('idle');
+  _scheduleFrame() {
+    if (this._destroyed || this._raf != null || this.runtime.state === 'paused' ||
+        this.platform.document.hidden) return false;
+    this._raf = this.platform.requestAnimationFrame(this._loop);
+    return true;
+  }
 
-    // Gaze: idle wander / thinking saccades / listening focus.
-    const g = this._gaze;
-    g.timer -= dt;
-    if (g.timer <= 0) {
-      if (this.state === 'thinking') {
-        g.tx = (Math.random() - 0.5) * 2.4; g.ty = (Math.random() - 0.5) * 1.6;
-        g.timer = 0.12 + Math.random() * 0.2;
-      } else if (this.state === 'listening') {
-        g.tx = 0; g.ty = -0.3; g.timer = 0.5;
-      } else {
-        g.tx = (Math.random() - 0.5) * 1.2; g.ty = (Math.random() - 0.5) * 0.8;
-        g.timer = 0.8 + Math.random() * 2.5;
-      }
+  _handleVisibility() {
+    if (this._destroyed) return;
+    if (this.platform.document.hidden) {
+      this._visibilityPaused = this.runtime.command({ type: 'pause' });
+      if (this._raf != null) this.platform.cancelAnimationFrame(this._raf);
+      this._raf = null;
+      return;
     }
-    const gk = Math.min(1, 14 * dt);
-    g.x += (g.tx - g.x) * gk;
-    g.y += (g.ty - g.y) * gk;
+    if (this._visibilityPaused) {
+      this._visibilityPaused = false;
+      this.runtime.command({ type: 'resume' });
+      this._last = this.platform.now();
+      this._scheduleFrame();
+    }
+  }
 
-    // Emotion parameter blending + jitter from gazeJitter.
-    blendParams(this.params, EMOTIONS[this.targetEmotion], dt);
-    const jit = this.params.gazeJitter;
-    const jx = jit ? (Math.random() - 0.5) * jit * 1.4 : 0;
-    const jy = jit ? (Math.random() - 0.5) * jit * 0.8 : 0;
+  _writeDataset(name, value) {
+    if (this.container?.dataset) this.container.dataset[name] = value;
+    const doc = this.platform?.document || globalThis.document;
+    if ((!this.container || this.container.id === 'stage') && doc?.body?.dataset) {
+      doc.body.dataset[name] = value;
+    }
+  }
 
-    this.engine.tick(dt);
-    const s = this.engine.out;
-
-    this.renderer.render(dt, {
-      params: this.params,
-      mode: this.state,
-      dyn: {
-        mouthOpen: s.open,
-        mouthWide: s.wide,
-        tension: s.tension,
-        energy: s.energy,
-        gazeX: g.x + jx,
-        gazeY: g.y + jy,
-        coherence: this.coherence,
-        blink: 1, swayX: 0, swayY: 0, t: 0, // renderer fills these
-      },
-    });
+  _requireLive() {
+    if (this._destroyed) throw new Error('CodefallFace has been destroyed');
   }
 }

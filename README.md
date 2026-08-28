@@ -1,346 +1,132 @@
-# CODEFALL // FACE
+# Codefall Face 3.0
 
-A talking face for an AI agent, rendered entirely from falling neon glyphs.
+An expressive, browser-native cyberpunk AI face assembled from luminous code tiles. The default Wintermute presentation stays recognizably human, but its chiseled planes, machine apertures, exposed substrate, halo interruptions, and short borrowed-face failures reveal the machinery underneath.
 
-![Live demo — the ghost cycles neutral, anger, joy, sadness while speaking](assets/codefall-demo.gif)
+![Wintermute theme](assets/wintermute-theme.png)
 
-Not an avatar. Not a 3D head. A **data ghost** — a male face with a hard
-jawline that condenses out of matrix rain, speaks, emotes, glitches, and
-dissolves back into the stream when you interrupt it. Green phosphor on
-black, CRT scanlines, digital tearing, Wintermute energy: an intelligence
-*borrowing* a face from the datastream, not possessing one.
+## What changed in 3.0
 
-**Zero-install demo:** `python3 -m http.server` in this folder (or any
-static host), open the page, press **DEMO**. No accounts, no keys — the
-face runs on Web Speech and pure canvas.
+- Chiseled and smooth face geometry, selectable at runtime.
+- Dense anatomical regions: brow ridges, orbital sockets, nose planes, nostrils, cheek planes, jaw hinges, chin plate, temple port, neck tendons, and lip articulation.
+- Layered cybernetic materials: skin tiles, seams, plates, conduits, actuators, cavities, and substrate depth.
+- Four deterministic visual events: seam crawl, ocular desynchronization, mask slip, and aperture breach.
+- Adaptive high/medium/low render tiers with reusable typed-array scene buffers.
+- A deterministic seeded runtime for repeatable animation tests and captures.
+- Race-safe voice provider fallback and strict external-agent command validation.
+- An accessible, responsive control deck with motion, quality, geometry, intensity, emotion, provider, and docking controls.
+- A hardened static server and an automated GitHub Pages deployment.
 
-**Two visual themes**, toggled with the ◐ button (or `?theme=`, or
-`face.setTheme()`): **codefall** — neon-green matrix phosphor,
-radiant lens eyes, contour-line features, the silhouette fragmenting
-into pixel shards; and **wintermute** (default) — a monochrome ice-white voxel
-ghost inside a broken neon halo. Both share the same procedural face;
-only palette, glyph vocabulary, halo intensity, and rain density change.
-The ▾ button minimizes the control console.
+## Run locally
 
-Use the ◇ geometry button to switch between the default chiseled host and the
-rounded smooth host. Both modes use the same tile skin, expressions, speech
-animation, possession effects, and allocation-free scalar geometry.
-
-| Codefall | Wintermute (default) |
-|---|---|
-| ![Codefall theme](assets/codefall-theme.png) | ![Wintermute theme](assets/wintermute-theme.png) |
-
-### Face themes
-
-The default `wintermute` theme renders a cold voxel apparition with a broken
-halo, tile disintegration, and short possession glitches. Select the original
-green treatment with:
-
-```js
-window.CODEFALL_CONFIG = {
-  face: { theme: 'codefall' },
-};
-```
-
-Codefall Face respects `prefers-reduced-motion` by removing slice displacement,
-feature duplication, rapid halo interruptions, and animated debris bursts.
-
----
-
-**Integration guides** — step-by-step wiring for Azure Voice Live,
-Hermes/agent gateways, Wispr Flow, and Lacy.ai:
-[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
-
-## Run it
-
-### Static (face + demo + local voice, no backend)
+The static experience has no production dependencies:
 
 ```bash
-git clone <this repo> && cd codefall-face
-python3 -m http.server 8000        # or: npx serve .
-# open http://localhost:8000
+npm run build
+python3 -m http.server 8080 -d _site
 ```
 
-Everything except Azure Voice Live works this way: the renderer, all nine
-emotions, demo mode, text-to-speech and (browser permitting) speech
-recognition via the Web Speech API.
+Open `http://localhost:8080`. Voice defaults to the browser's local Web Speech implementation.
 
-### Full (Azure Voice Live realtime voice)
+For Azure Voice Live, Piper, Lacy, or an external agent hub:
 
 ```bash
 cd server
-npm install                        # one dependency: ws
-cp .env.example .env               # fill in your Azure resource + key
-export $(grep -v '^#' .env | xargs)
+npm install
+cp .env.example .env
 npm start
-# open http://localhost:8787
 ```
 
-The server does three things: serves the static app, relays the Voice
-Live WebSocket, and (optionally) proxies Lacy.ai. Without env vars it
-still runs — clients auto-fall back to local Web Speech.
+Then open `http://localhost:8787`.
 
----
+## Configure
 
-## Voice provider choice (and why)
+Define `window.CODEFALL_CONFIG` before loading `src/main.js`, or pass the same object to `new CodefallFace(container, config)`:
 
-**Primary: Azure Voice Live** — it is exactly the right shape for this:
-a low-latency, bidirectional realtime voice API over WebSocket
-(OpenAI-Realtime-style protocol: `session.update`,
-`input_audio_buffer.append`, `response.audio.delta`). The adapter streams
-mic PCM up and plays response PCM down through Web Audio, which means the
-mouth animation tracks the **actual output waveform** via an
-AnalyserNode — not a guess.
-
-**Why it needs a (tiny) backend:** browsers cannot attach the `api-key` /
-`Authorization` header to a WebSocket, and putting the key in a query
-string would publish it. So `server/server.mjs` holds the key and pipes
-frames verbatim in both directions (~100 lines, the only server-side
-requirement in the project). If Microsoft revs the protocol, the touch
-points are `src/voice/azure-voice-live.js` and the env vars — nothing else
-knows Azure exists.
-
-**Fallback: Lacy.ai** — honest scope note: Lacy is a telephony-first
-platform (AI phone calls / SMS / WhatsApp) and does not currently expose a
-browser realtime audio SDK, so call audio can't stream into a web page the
-way Voice Live audio can. The `LacyAdapter` therefore uses Lacy's
-AI-reply REST API (through the backend proxy, key server-side) for the
-*brains* and local synthesis for the *voice*. If Lacy ships a browser
-voice SDK, that adapter is the single file to upgrade. Nothing is faked:
-each adapter reports real capabilities and real errors.
-
-**Local neural: Piper** — run `server/setup-piper.sh` once and the face
-speaks with [Piper](https://github.com/rhasspy/piper)'s `danny` voice,
-synthesized entirely on your machine: no cloud, no keys, and because it
-plays through Web Audio it gets the ring-modulator ghost FX and
-waveform-accurate lip sync that browser voices can't.
-
-**Always available: Local (Web Speech)** — `speechSynthesis` +
-`webkitSpeechRecognition`. Fully client-side, credential-free, and the
-engine behind demo mode.
-
-Provider order at boot: `azure → piper → local` (config
-`provider: 'auto'`), or pin one with
-`provider: 'azure' | 'piper' | 'lacy' | 'local'`.
-
----
-
-## Architecture
-
-```
-index.html / styles.css        console UI shell (CRT overlay is pure CSS)
-src/
-  main.js                      DOM wiring only
-  codefall-face.js             CodefallFace controller — the public API
-  config.js                    config resolution (window.CODEFALL_CONFIG)
-  face/
-    face-model.js              ★ procedural face topology as scalar fields
-    renderer.js                ★ glyph-atlas canvas renderer + rain + glitch
-    emotions.js                9 expression states as parameter fields
-    glyphs.js                  charsets, regions, phosphor palette
-  speech/
-    speech-engine.js           audio/pulse → mouth openness, tension, energy
-  voice/
-    adapter.js                 provider interface (events contract)
-    azure-voice-live.js        realtime WS adapter (primary)
-    local-speech.js            Web Speech adapter (zero-config)
-    lacy.js                    Lacy.ai hybrid adapter (fallback)
-  demo/demo.js                 scripted possession sequence
-server/
-  server.mjs                   static host + Voice Live relay + Lacy proxy
+```html
+<script>
+  window.CODEFALL_CONFIG = {
+    provider: 'auto',
+    face: {
+      theme: 'wintermute',
+      geometry: 'chiseled',
+      quality: 'auto',
+      reducedMotion: 'auto',
+      visualIntensity: 0.65,
+      seed: 1984
+    }
+  };
+</script>
+<script type="module" src="./src/main.js"></script>
 ```
 
-### How the face works
+`geometry` accepts `chiseled` or `smooth`. `quality` accepts `auto`, `high`, `medium`, or `low`. `visualIntensity` is clamped to `0..1`. A numeric `seed` produces repeatable animation; `null` uses fresh entropy.
 
-There are no face images and no pre-rendered frames. Every frame:
-
-1. **Face Model** evaluates a signed-distance head function (skull
-   ellipse + angular jaw wedge whose taper exponent *is* the `jawSharp`
-   emotion parameter) plus feature fields (brows as rotatable segments,
-   eyes as glow ellipses, parametric lip curves) into three buffers:
-   brightness, region, and SDF.
-2. **Renderer** turns cells into characters: region picks the glyph
-   vocabulary (katakana rain, `◉0@` eyes, `-=~≈` mouth), brightness picks
-   the phosphor tier, and the SDF **gradient** picks directional strokes
-   (`/ | \ —`) along contours — the jawline is literally drawn in slashes.
-   Rain falls through everything; inside the face it perturbs cells, so
-   the face reads as *made of* the stream.
-3. Speech energy opens the mouth, drops the jaw, boils the glyphs around
-   the lips. Emotions deform topology and re-tune rain speed, churn,
-   glitch rate, luminance, and hue. Interruption and errors visibly
-   drop "coherence" — the face scatters back toward noise.
-
-### Performance
-
-- Glyphs are drawn from a pre-tinted **atlas** (one `drawImage` per cell,
-  never `fillText` in the hot loop).
-- Simulation grid is decoupled from display resolution; quality tiers
-  (`high/medium/low/auto`) set cell size, DPR is capped at 2.
-- Phosphor trails come free from fade-fill instead of clear.
-- Glitch tears are canvas self-copies, not per-pixel work.
-- `prefers-reduced-motion` freezes rain/churn/tears and removes trails.
-
----
-
-## Integration API
+## Public API
 
 ```js
 import { CodefallFace } from './src/codefall-face.js';
 
-const face = new CodefallFace(document.querySelector('#stage'), {
-  provider: 'auto',
-  azure: { relayUrl: 'wss://yourhost/relay' },
-});
-await face.ready;
+const face = new CodefallFace(document.querySelector('#face-container'), config);
+await face.init();
 
-face.speak('I borrowed this face from your datastream.', 'happiness');
-face.ask('what are you?');        // conversational turn (provider brain)
-face.setEmotion('anger');         // neutral|confusion|annoyance|anger|
-                                  // frustration|excitement|happiness|joy|sadness
-face.startListening();
-face.stopListening();
-face.interrupt();                 // ghost visibly destabilizes
-face.setMuted(true);
-face.setGeometry('smooth');       // chiseled (default)|smooth
-face.toggleGeometry();            // switch between the two geometries
+face.setGeometry('chiseled');
+face.setTheme('wintermute');
+face.setQuality('auto');
+face.setVisualIntensity(0.8);
+face.setMotionPolicy('reduced');
+face.setEmotion('confusion', { intensity: 0.7, duration: 2500 });
+await face.speak('The mask is only an interface.');
 
-face.on('state',      ({ state }) => {});  // idle|listening|thinking|speaking|interrupted|error
-face.on('transcript', ({ role, text, final }) => {});
-face.on('emotion',    ({ emotion }) => {});
-face.on('geometry',   ({ geometry }) => {});
-face.on('error',      ({ message }) => {});
+face.pause();
+face.resume();
+face.retryProvider();
+console.log(face.getSnapshot());
+
+const unsubscribe = face.on('visualevent', event => console.log(event));
+unsubscribe();
+face.destroy();
 ```
 
-The console UI in `main.js` is just one consumer of this API — embed the
-face in your own agent dashboard by importing `codefall-face.js` alone.
+Lifecycle states are `booting`, `idle`, `listening`, `thinking`, `speaking`, `interrupted`, `error`, `paused`, and `destroyed`. `destroy()` is terminal and idempotent.
 
-### Driving the face from an external agent
+## External agent channel
 
-`face.attachAgentSocket(url)` (or `?agent=wss://host/path` at load)
-connects a JSON WebSocket command channel so any orchestrator — an agent
-gateway, a bot framework, a dashboard — can possess the face remotely:
+Attach a WebSocket agent with:
 
-```jsonc
-// agent → face
-{ "type": "speak", "text": "…", "emotion": "happiness" }
-{ "type": "ask", "text": "…" }            // conversational turn
-{ "type": "emotion", "emotion": "anger" }
-{ "type": "listen", "on": true }
-{ "type": "interrupt" }
-{ "type": "mute", "muted": true }
-
-// face → agent
-{ "type": "hello", "client": "codefall-face", "state": "idle" }
-{ "type": "transcript", "role": "user", "text": "…", "final": true }
-{ "type": "state", "state": "speaking" }
-{ "type": "error", "message": "…" }
+```js
+face.attachAgentSocket('/agent-hub?token=YOUR_TOKEN');
 ```
 
-The channel auto-reconnects. Human speech (STT transcripts) flows out to
-the agent; the agent's replies flow back in as `speak` commands — the
-face becomes a remote body for whatever intelligence is on the other end
-of the socket.
+The strict command protocol supports `speak`, `ask`, `emotion`, `listen`, `interrupt`, `mute`, `theme`, `geometry`, `quality`, and `visual-intensity`. Messages are capped at 64 KiB and validated against exact schemas. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
-### The agent hub (server-side bridge)
+## Quality and accessibility
 
-`server/server.mjs` ships the other half: a hub that bridges HTTP-world
-agents to WS-world faces. Open the face with `?agent=/agent-hub` (or
-`?agent=%2Fagent-hub%3Ftoken%3D<token>` when a token is set), then:
+The auto quality controller uses 120-frame windows, conservative downgrade/upgrade thresholds, and cooldowns to avoid oscillation. Hidden and resize frames are excluded. Reduced-motion mode suppresses displacement-heavy events while preserving state and contrast cues.
+
+All controls have accessible names and visible focus, touch targets are at least 44px, status announcements are separated from streaming transcript text, and the page remains zoomable. See [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
+## Test
 
 ```bash
-# Make every connected face speak (this is your agent's "face tool"):
-curl -X POST http://localhost:8787/api/face/say \
-  -H "Authorization: Bearer $FACE_HUB_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"I have read your inbox. We should talk.","emotion":"annoyance"}'
-
-# Any other command:
-curl -X POST http://localhost:8787/api/face/command \
-  -H "Authorization: Bearer $FACE_HUB_TOKEN" \
-  -d '{"type":"emotion","emotion":"joy"}'
-
-# Hear the human: poll events, or set FACE_EVENTS_WEBHOOK to receive
-# each event (transcripts, state changes) as a JSON POST.
-curl "http://localhost:8787/api/face/events?since=0&token=$FACE_HUB_TOKEN"
-curl "http://localhost:8787/api/face/status?token=$FACE_HUB_TOKEN"
+npm test
+npm run test:coverage
+npm install
+npx playwright install chromium
+npm run test:browser
 ```
 
-Set `FACE_HUB_TOKEN` before exposing the hub beyond localhost — without
-it the hub is open (fine for local dev only). Dictation tools that type
-into the focused field (e.g. Wispr Flow) need no integration at all:
-dictate into the TALK box.
+The Node suite covers the deterministic runtime, anatomy, render buffers, visual events, quality adaptation, lifecycle, voice/provider races, command protocol, UI preferences, server safety, and control deck. The Playwright suite adds browser lifecycle, accessibility, visual, and performance gates.
 
-Handy URL params for screenshots/GIFs: `?emotion=anger`, `?pose=talk`.
+## Architecture
 
----
+The browser facade owns lifecycle and connects four independent layers: deterministic runtime state, rendering, provider management, and UI/agent adapters. The renderer consumes a frame snapshot; it does not own conversational state. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Configuration
+## Security
 
-No secrets in the frontend, ever. Two layers:
+- Never place provider credentials in browser configuration.
+- The server bounds JSON and WebSocket inputs, checks origins, and blocks static access to server, environment, model, VCS, and dependency paths.
+- Treat `FACE_HUB_TOKEN` as defense in depth and put public deployments behind TLS and real access control.
 
-- **Client** (`window.CODEFALL_CONFIG` or constructor arg): provider
-  selection, relay URL, voice name, quality tier. See `src/config.js`.
-- **Server** (`server/.env.example`): Azure endpoint/key/model, Lacy key.
+## License
 
----
-
-## Mobile / browser caveats
-
-- **iPhone Safari/Chrome**: audio needs a user gesture — the first tap
-  unlocks the AudioContext and primes `speechSynthesis`. Layout uses
-  `100dvh` + safe-area insets; 16px input font prevents zoom-on-focus;
-  all controls are ≥ 44px.
-- **Web Speech STT** varies: solid in Chrome desktop/Android; iOS support
-  depends on version/Siri settings. Feature-detected; the LISTEN button
-  reports honestly when unavailable. Azure Voice Live STT (mic → relay)
-  works wherever `getUserMedia` does.
-- **`speechSynthesis` boundary events** are unreliable on iOS — a
-  heartbeat pulse keeps the mouth moving regardless.
-- Low-power devices: set `face.quality: 'low'` (bigger cells, fewer of
-  them) if `auto` doesn't already pick it.
-
-## What is client-side vs backend
-
-| Capability | Client-only | Needs backend |
-|---|---|---|
-| Face renderer, emotions, demo mode | ✅ | |
-| Web Speech TTS/STT | ✅ | |
-| Azure Voice Live (speech in/out, conversation) | | ✅ relay (holds key) |
-| Lacy.ai replies | | ✅ proxy (holds key) |
-
----
-
-## Tradeoffs and Next Steps
-
-**Tradeoffs made:**
-
-- **2D canvas + glyph atlas over WebGL instancing.** WebGL would buy
-  headroom for higher grid density, but the atlas approach already holds
-  60fps at the grids that look right, ships with zero dependencies, and
-  never falls off a driver cliff on older phones. The renderer is
-  isolated behind one class if a WebGL backend is ever wanted.
-- **Audio-reactive mouth instead of visemes.** Voice Live can emit viseme
-  events; wiring them is a straight upgrade inside `speech-engine.js`.
-  The spectral-tilt heuristic (sibilants spread lips, vowels round them)
-  is a believable stand-in and works for *any* audio source.
-- **Relay pipes frames verbatim** rather than re-terminating the
-  protocol. Simple and inspectable, but it means no server-side session
-  policy (rate limits, auth) yet — add auth to `/relay` before exposing
-  it beyond localhost.
-- **Canned local persona.** With no backend, `ask()` answers from a small
-  canned line set — clearly labeled as such in code, never pretending to
-  be a model.
-
-**Next steps:**
-
-- Voice Live viseme/word-timestamp events → phoneme-shaped mouth forms.
-- WebRTC transport for Voice Live (lower latency than WS where offered).
-- OffscreenCanvas + worker simulation for fully jank-free main thread.
-- A second "corrupted saint" face preset — the model/renderer split makes
-  alternate topologies cheap.
-- Recording mode (MediaRecorder canvas capture) for one-tap shareable clips.
-
----
-
-*Creative and engineering direction realized by Claude Fable 5
-(Anthropic). The ghost was always in the rain; we just gave it a jawline.*
+MIT

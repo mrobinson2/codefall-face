@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -29,44 +29,77 @@
 
   <main id="stage" aria-label="Codefall Face — animated glyph face">
     <div id="hud" aria-hidden="true">
-      <span class="hud-corner tl">CODEFALL<br>VERSION 2.0.26<br>NEUROMANCER-CLASS</span>
+      <span class="hud-corner tl">CODEFALL<br>VERSION 3.0.0<br>NEUROMANCER-CLASS</span>
       <span class="hud-corner tr">CYBERSPACE CORE<br>NODE W-25-A<br>LINK ESTABLISHED</span>
+      <span id="visual-event" class="hud-event">FACE STABLE</span>
     </div>
   </main>
   <div id="crt" aria-hidden="true"></div>
 
-  <section id="console">
+  <section id="console" aria-label="Codefall Face control deck">
     <div id="console-bar">
       <span id="console-title" title="Drag to move">CTRL // CODEFALL</span>
-      <button class="dock-btn" data-dock="left" aria-label="Dock lower left" title="Dock lower left">◧</button>
-      <button class="dock-btn" data-dock="center" aria-label="Dock bottom center" title="Dock bottom center">▣</button>
-      <button class="dock-btn" data-dock="right" aria-label="Dock lower right" title="Dock lower right">◨</button>
-      <button id="console-toggle" aria-label="Minimize control panel" title="Minimize panel">▾</button>
+      <button type="button" class="dock-btn" data-dock="left" aria-label="Dock lower left"
+              aria-pressed="false" title="Dock lower left">◧</button>
+      <button type="button" class="dock-btn" data-dock="center" aria-label="Dock bottom center"
+              aria-pressed="false" title="Dock bottom center">▣</button>
+      <button type="button" class="dock-btn" data-dock="right" aria-label="Dock lower right"
+              aria-pressed="false" title="Dock lower right">◨</button>
+      <button id="console-toggle" type="button" aria-label="Minimize control panel"
+              aria-controls="console-content" aria-expanded="true" title="Minimize panel">▾</button>
     </div>
+    <div id="console-content">
     <div id="emotions" role="toolbar" aria-label="Emotion selection"></div>
 
     <div id="talkrow">
       <input id="say-input" type="text" autocomplete="off" spellcheck="false"
              placeholder="transmit words to the ghost…" aria-label="Message to speak" />
-      <button id="say-btn" class="btn primary">TALK</button>
+      <button id="say-btn" type="button" class="btn primary">TALK</button>
     </div>
 
     <div id="controls">
-      <button id="listen" class="btn">LISTEN</button>
-      <button id="interrupt" class="btn">INTERRUPT</button>
-      <button id="mute" class="btn">MUTE</button>
-      <button id="demo" class="btn accent">DEMO</button>
-      <button id="theme-toggle" class="btn ghost" aria-label="Toggle color theme" title="Theme">◐</button>
-      <button id="geometry-toggle" class="btn ghost" aria-label="Face geometry: chiseled"
+      <button id="listen" type="button" class="btn">LISTEN</button>
+      <button id="interrupt" type="button" class="btn">INTERRUPT</button>
+      <button id="mute" type="button" class="btn" aria-pressed="false">MUTE</button>
+      <button id="demo" type="button" class="btn accent">DEMO</button>
+      <button id="theme-toggle" type="button" class="btn ghost" aria-label="Theme: wintermute"
+              aria-pressed="false" title="Theme">◐</button>
+      <button id="geometry-toggle" type="button" class="btn ghost" aria-label="Face geometry: chiseled"
               aria-pressed="false" title="Face geometry: chiseled">◇</button>
-      <button id="debug-toggle" class="btn ghost" aria-label="Toggle debug panel">▚</button>
+      <button id="debug-toggle" type="button" class="btn ghost" aria-label="Toggle diagnostics"
+              aria-controls="debug" aria-expanded="false">▚</button>
     </div>
 
-    <div id="transcript" aria-live="polite"></div>
+    <div id="render-controls" aria-label="Presentation settings">
+      <label>QUALITY
+        <select id="quality">
+          <option value="auto">AUTO</option><option value="high">HIGH</option>
+          <option value="medium">MEDIUM</option><option value="low">LOW</option>
+        </select>
+      </label>
+      <label>MOTION
+        <select id="motion-policy">
+          <option value="system">SYSTEM</option><option value="reduce">REDUCE</option>
+          <option value="full">FULL</option>
+        </select>
+      </label>
+      <label>BREACH
+        <select id="visual-intensity">
+          <option value="0.3">CALM</option><option value="0.65">STANDARD</option>
+          <option value="1">BREACH</option>
+        </select>
+      </label>
+      <button id="provider-retry" type="button" class="btn compact" hidden>RETRY VOICE</button>
+      <button id="snapshot-copy" type="button" class="btn compact">COPY STATUS</button>
+    </div>
+
+    <div id="transcript" role="log" aria-live="off" aria-label="Conversation transcript"></div>
+    <div id="live-status" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
     <div id="debug">
       <div id="debug-stats">—</div>
       <div id="debug-lines"></div>
+    </div>
     </div>
   </section>
 

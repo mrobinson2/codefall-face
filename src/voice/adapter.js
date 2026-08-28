@@ -22,7 +22,11 @@ export class VoiceAdapter extends EventTarget {
     this.config = config;
     this.name = 'base';
     this.muted = false;
-    this.capabilities = { tts: false, stt: false, conversational: false };
+    this.capabilities = {
+      tts: false, stt: false, conversational: false, waveform: false, retry: true,
+    };
+    this._destroyed = false;
+    this._disposers = new Set();
   }
 
   emit(type, detail = {}) {
@@ -49,5 +53,23 @@ export class VoiceAdapter extends EventTarget {
 
   setMuted(m) { this.muted = m; }
 
-  destroy() {}
+  addDisposer(disposer) {
+    if (typeof disposer !== 'function') return () => {};
+    if (this._destroyed) {
+      disposer();
+      return () => {};
+    }
+    this._disposers.add(disposer);
+    return () => this._disposers.delete(disposer);
+  }
+
+  destroy() {
+    if (this._destroyed) return false;
+    this._destroyed = true;
+    for (const dispose of this._disposers) {
+      try { dispose(); } catch { /* continue disposing sibling resources */ }
+    }
+    this._disposers.clear();
+    return true;
+  }
 }

@@ -67,6 +67,10 @@ const defaults = {
     reducedMotion: 'auto',
     // Seconds for the boot "assembly from the datastream" sequence.
     bootDuration: 4.0,
+    // Frequency/amplitude budget for borrowed-face visual events.
+    visualIntensity: 0.65,
+    // null = entropy-seeded; uint32 = deterministic visual replay.
+    seed: null,
   },
 
   debug: false,
@@ -86,5 +90,20 @@ function deepMerge(base, over) {
 
 export function resolveConfig(userConfig) {
   const winConfig = typeof window !== 'undefined' ? window.CODEFALL_CONFIG : null;
-  return deepMerge(deepMerge(defaults, winConfig), userConfig);
+  const merged = deepMerge(deepMerge(defaults, winConfig), userConfig);
+  const result = { ...merged, face: { ...merged.face }, diagnostics: [] };
+  const intensity = result.face.visualIntensity;
+  if (Number.isFinite(intensity)) {
+    result.face.visualIntensity = Math.max(0, Math.min(1, intensity));
+  } else {
+    result.face.visualIntensity = defaults.face.visualIntensity;
+    result.diagnostics.push({ code: 'invalid-visual-intensity' });
+  }
+  const seed = result.face.seed;
+  if (seed !== null &&
+      (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)) {
+    result.face.seed = null;
+    result.diagnostics.push({ code: 'invalid-seed' });
+  }
+  return result;
 }

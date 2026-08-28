@@ -21,7 +21,9 @@ import {
   RAMP, RAIN, EDGE, EYE, MOUTH, BLOCKS, DEBRIS, MACHINE,
   MATERIAL, THEMES, makeTiers, tierFor, wintermuteGlyphFor,
 } from './glyphs.js';
-import { PossessionController } from './possession.js';
+import { SceneBuffers } from './scene-buffers.js';
+import { QualityController } from './quality-controller.js';
+import { backgroundPass, substrateMaterialVisible } from './render-passes.js';
 
 const QUALITY = {
   high: { cell: 11 },
@@ -77,13 +79,22 @@ export function debrisLimit(quality) {
   return quality === 'low' ? 36 : quality === 'medium' ? 72 : 120;
 }
 
-export class CodefallRenderer {
+export class CodefallRenderer extends EventTarget {
   constructor(canvas, faceModel, opts = {}) {
+    super();
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.model = faceModel;
     this.reducedMotion = !!opts.reducedMotion;
     this.qualityName = opts.quality || 'auto';
+    this.platform = opts.platform || {
+      window,
+      document,
+      now: () => performance.now(),
+    };
+    this.streams = opts.streams || {};
+    this._rainRandom = this.streams.rain || Math.random;
+    this._debrisRandom = this.streams.debris || Math.random;
     this.theme = THEMES[opts.theme] || THEMES.codefall;
     this.hueShift = 0;
     this._debris = [];
@@ -93,34 +104,47 @@ export class CodefallRenderer {
     this._fpsAcc = 0;
     this._fpsN = 0;
     this._time = 0;
-    this._blink = 1;
-    this._blinkTimer = 2 + Math.random() * 3;
-    this.possessionController = new PossessionController();
     this.possession = {
-      active: false, envelope: 0, bands: [], aperture: null, haloDrop: 0,
+      active: false, type: 'none', envelope: 0, bands: [], aperture: null,
+      haloDrop: 0, eyeSide: 0,
     };
+    this.buffers = new SceneBuffers({
+      glyphRandom: this._rainRandom,
+      churnRandom: this._debrisRandom,
+    });
+    this.qualityController = new QualityController({
+      policy: this.qualityName,
+      now: () => this.platform.now(),
+    });
+    this.qualityController.addEventListener('change', (event) => {
+      this.qualityName = event.detail.policy;
+      const tierChanged = this.quality !== event.detail.tier;
+      this.quality = event.detail.tier;
+      this.dispatchEvent(new CustomEvent('qualitychange', { detail: event.detail }));
+      if (this._ready && !this._resizing && tierChanged) this.resize();
+    });
 
     this.resize();
-  }
-
-  detectQuality() {
-    if (this.qualityName !== 'auto') return this.qualityName;
-    const small = Math.min(window.innerWidth, window.innerHeight) < 500;
-    const dpr = window.devicePixelRatio || 1;
-    if (small) return 'medium';
-    return dpr > 1.5 ? 'high' : 'high';
+    this._ready = true;
   }
 
   resize() {
+    if (this._resizing) return false;
+    this._resizing = true;
     const rect = this.canvas.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.min(2, this.platform.window.devicePixelRatio || 1);
+    const previousDpr = this.dpr;
     this.dpr = dpr;
     this.w = Math.max(1, Math.round(rect.width));
     this.h = Math.max(1, Math.round(rect.height));
     this.canvas.width = this.w * dpr;
     this.canvas.height = this.h * dpr;
 
-    this.quality = this.detectQuality();
+    this.quality = this.qualityController.chooseInitial({
+      width: this.w,
+      height: this.h,
+      dpr,
+    });
     const q = QUALITY[this.quality];
     const font = q.cell;
     this.cellW = Math.round(font * 0.62 * 100) / 100;
@@ -129,28 +153,28 @@ export class CodefallRenderer {
     this.rows = Math.ceil(this.h / this.cellH);
     this.fontSize = font;
 
-    const n = this.cols * this.rows;
-    this.bright = new Float32Array(n);
-    this.region = new Uint8Array(n);
-    this.sdf = new Float32Array(n);
-    this.material = new Uint8Array(n);
+    const gridChanged = this.buffers.resize(this.cols, this.rows);
+    this.bright = this.buffers.brightness;
+    this.region = this.buffers.region;
+    this.sdf = this.buffers.distance;
+    this.material = this.buffers.material;
+    this.depth = this.buffers.depth;
+    this.substrate = this.buffers.substrate;
     this._wintermuteGlyphsDirty = this.theme.name === 'wintermute';
-    this.glyph = new Uint16Array(n); // atlas index per cell
-    this.churnPhase = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      this.glyph[i] = (Math.random() * ATLAS_CHARS.length) | 0;
-      this.churnPhase[i] = Math.random();
-    }
+    this.glyph = this.buffers.glyph;
+    this.churnPhase = this.buffers.churnPhase;
 
     // Rain columns: position (cells), speed, trail length
-    this.rain = [];
-    for (let c = 0; c < this.cols; c++) {
-      this.rain.push({
-        y: Math.random() * this.rows * 2 - this.rows,
-        speed: 6 + Math.random() * 14,
-        len: 5 + Math.random() * 14,
-        charSeed: (Math.random() * 997) | 0,
-      });
+    if (gridChanged) {
+      this.rain = [];
+      for (let c = 0; c < this.cols; c++) {
+        this.rain.push({
+          y: this._rainRandom() * this.rows * 2 - this.rows,
+          speed: 6 + this._rainRandom() * 14,
+          len: 5 + this._rainRandom() * 14,
+          charSeed: (this._rainRandom() * 997) | 0,
+        });
+      }
     }
 
     this.model.setGrid({
@@ -158,12 +182,18 @@ export class CodefallRenderer {
       cellW: this.cellW, cellH: this.cellH,
       width: this.w, height: this.h,
     });
-    this.possessionController.reset(this._time);
-
-    this.buildAtlas(this.hueShift);
+    if (gridChanged || previousDpr !== dpr || !this.atlas) this.buildAtlas(this.hueShift);
     // Reset to black so the fade pass has a clean base.
     this.ctx.fillStyle = '#000';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this._resizing = false;
+    return true;
+  }
+
+  setQuality(policy) {
+    const changed = this.qualityController.setPolicy(policy);
+    if (changed && policy === 'auto') this.resize();
+    return changed;
   }
 
   setTheme(name) {
@@ -181,7 +211,7 @@ export class CodefallRenderer {
     const tiers = makeTiers(this.theme.hue + hueShift * 0.6, this.theme.sat);
     const cw = Math.ceil(this.cellW * this.dpr);
     const chh = Math.ceil(this.cellH * this.dpr);
-    const atlas = document.createElement('canvas');
+    const atlas = this.platform.document.createElement('canvas');
     atlas.width = cw * ATLAS_CHARS.length;
     atlas.height = chh * TIERS;
     const a = atlas.getContext('2d');
@@ -216,7 +246,7 @@ export class CodefallRenderer {
         return CHAR_INDEX.get(EYE[(intensity * EYE.length) | 0] ?? EYE[EYE.length - 1]);
       case REGION.MOUTH:
       case REGION.MOUTH_INNER:
-        return CHAR_INDEX.get(MOUTH[(Math.random() * MOUTH.length) | 0]);
+        return CHAR_INDEX.get(MOUTH[(this._rainRandom() * MOUTH.length) | 0]);
       case REGION.SHARD: {
         const bi = Math.min(BLOCKS.length - 1, (intensity * BLOCKS.length * 1.4) | 0);
         return CHAR_INDEX.get(BLOCKS[bi]);
@@ -227,12 +257,12 @@ export class CodefallRenderer {
         // Face flesh: mix brightness-ramp with datastream characters,
         // so the face reads as *made of* code, not shaded with dots.
         // Blocky themes lean on voxel tiles for the mosaic-head look.
-        if (this.theme.blocky && Math.random() < 0.55) {
+        if (this.theme.blocky && this._rainRandom() < 0.55) {
           const bi = Math.min(BLOCKS.length - 1, (intensity * BLOCKS.length) | 0);
           return CHAR_INDEX.get(BLOCKS[bi]);
         }
-        if (Math.random() < 0.2) {
-          return CHAR_INDEX.get(RAIN[(Math.random() * RAIN.length) | 0]);
+        if (this._rainRandom() < 0.2) {
+          return CHAR_INDEX.get(RAIN[(this._rainRandom() * RAIN.length) | 0]);
         }
         const i = Math.min(RAMP.length - 1, (intensity * RAMP.length) | 0);
         return CHAR_INDEX.get(RAMP[i]);
@@ -249,57 +279,25 @@ export class CodefallRenderer {
     const ctx = this.ctx;
     const { cols, rows } = this;
     this._time += dt;
-    dyn.t = this._time;
-
-    // ---- blink scheduler --------------------------------------------
-    this._blinkTimer -= dt;
-    if (this._blinkTimer <= 0) {
-      this._blinkTimer = 1.8 + Math.random() * 4.2;
-      this._blinkAt = this._time;
-    }
-    if (this._blinkAt != null) {
-      const bt = (this._time - this._blinkAt) / 0.22;
-      this._blink = bt >= 1 ? 1 : Math.abs(Math.cos(bt * Math.PI)); // close+open
-      if (bt >= 1) this._blinkAt = null;
-    }
-    dyn.blink = this.reducedMotion ? 1 : this._blink;
-
-    // ---- idle body language -----------------------------------------
-    if (!this.reducedMotion) {
-      dyn.swayX = Math.sin(this._time * 0.31) * 0.015 * p.swayAmp;
-      dyn.swayY =
-        Math.sin(this._time * 0.47) * 0.012 * p.swayAmp +
-        Math.sin(this._time * 1.7) * 0.004 * p.breathAmp;
-    } else {
-      dyn.swayX = 0; dyn.swayY = 0;
-    }
 
     // ---- simulation ---------------------------------------------------
-    this.model.fill(this.bright, this.region, this.sdf, this.material, p, dyn);
+    this.model.fill(this.buffers, p, dyn);
 
     // ---- rebuild atlas if the emotion changed the hue ------------------
     if (Math.abs(p.hueShift - this.hueShift) > 4) this.buildAtlas(p.hueShift);
 
     // ---- fade pass (phosphor persistence) ------------------------------
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    if (this.reducedMotion) {
-      ctx.fillStyle = '#000';
-    } else {
-      const fade = 0.22 + 0.2 * (1 - Math.min(1, p.regen));
-      ctx.fillStyle = `rgba(0,0,0,${Math.min(0.6, fade).toFixed(3)})`;
-    }
-    ctx.fillRect(0, 0, this.w, this.h);
-
-    const possessionIntensity = Math.min(
-      1.4,
-      0.65 + p.tearForce * 0.35 + (state.mode === 'thinking' ? 0.2 : 0)
-        + (state.mode === 'speaking' ? dyn.energy * 0.25 : 0),
-    );
-    this.possession = this.possessionController.update(this._time, {
-      rows,
-      intensity: possessionIntensity,
+    backgroundPass({
+      ctx,
+      dpr: this.dpr,
+      width: this.w,
+      height: this.h,
       reducedMotion: this.reducedMotion,
+      params: p,
     });
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    this.possession = state.visualEvent || this.possession;
 
     // ---- halo ring, under-pass (glyphs draw over it, occluding) --------
     if (this.theme.ring > 0) {
@@ -311,9 +309,9 @@ export class CodefallRenderer {
     for (const col of this.rain) {
       col.y += col.speed * rainMul * dt;
       if (col.y - col.len > rows) {
-        col.y = -Math.random() * rows * 0.5;
-        col.speed = 6 + Math.random() * 14;
-        col.len = 5 + Math.random() * 14;
+        col.y = -this._rainRandom() * rows * 0.5;
+        col.speed = 6 + this._rainRandom() * 14;
+        col.len = 5 + this._rainRandom() * 14;
       }
     }
 
@@ -334,9 +332,19 @@ export class CodefallRenderer {
       for (let c = 0; c < cols; c++, i++) {
         let b = this.bright[i];
         const reg = this.region[i];
-        const mat = this.material[i];
+        let mat = this.material[i];
         const col = this.rain[c];
         if (reg === REGION.EDGE) this._edgeCells.push(i);
+
+        if (this.possession.type === 'seam-crawl' && mat === MATERIAL.SEAM) {
+          b = Math.max(b, 0.32 + this.possession.envelope * 0.85);
+        }
+        if (glitchCells !== 0 &&
+            substrateMaterialVisible(reg, this.substrate[i], this.possession)) {
+          mat = this.substrate[i] > 0.82 ? MATERIAL.CAVITY
+            : this.substrate[i] > 0.68 ? MATERIAL.ACTUATOR : MATERIAL.CONDUIT;
+          b = Math.max(b, 0.35 + this.substrate[i] * 0.65 * this.possession.envelope);
+        }
 
         // Rain contribution
         const dHead = col.y - r;
@@ -359,14 +367,14 @@ export class CodefallRenderer {
         if (!visible && !forceGlyphRefresh) continue;
 
         // Flicker
-        if (visible && flick && Math.random() < flick * 0.3) b *= 0.4;
+        if (visible && flick && this._rainRandom() < flick * 0.3) b *= 0.4;
 
         // Glyph churn: near rain heads, in turbulent regions, or randomly
         const churn =
           churnBase +
           (dHead >= 0 && dHead < 2 ? 0.8 : 0) +
           (reg === REGION.MOUTH_INNER ? dyn.energy * 0.5 : 0);
-        if (forceGlyphRefresh || (visible && Math.random() < churn * dt * 12)) {
+        if (forceGlyphRefresh || (visible && this._rainRandom() < churn * dt * 12)) {
           let gx = 0, gy = 0;
           if (reg === REGION.EDGE) {
             const L = c > 0 ? this.sdf[i - 1] : this.sdf[i];
@@ -388,19 +396,26 @@ export class CodefallRenderer {
           if (mat === MATERIAL.SEAM) b *= 0.5;
           if (mat === MATERIAL.APERTURE) b = Math.min(b, 0.04);
           if (mat === MATERIAL.MACHINE) b = Math.min(1.25, b + dyn.energy * 0.18);
+          if (mat === MATERIAL.CAVITY) b = Math.min(b, 0.045);
+          if (mat === MATERIAL.ACTUATOR || mat === MATERIAL.CONDUIT) {
+            b = Math.min(1.3, b + 0.22 * this.possession.envelope);
+          }
         }
 
         const tier = tierFor(Math.min(1.399, b) / 1.4 + (inRain && dHead < 1 ? 0.3 : 0));
+        const anchoredFeature = reg === REGION.EYE || reg === REGION.MOUTH ||
+          reg === REGION.MOUTH_INNER || reg === REGION.NOSE ||
+          reg === REGION.NOSE_PLANE || reg === REGION.NOSTRIL ||
+          reg === REGION.BROW_RIDGE;
+        const cellGlitchX = anchoredFeature ? 0 : glitchX;
         ctx.drawImage(
           this.atlas,
           this.glyph[i] * this.atlasCW, tier * this.atlasCH,
           this.atlasCW, this.atlasCH,
-          c * this.cellW + (reg === REGION.VOID ? 0 : glitchX),
+          c * this.cellW + (reg === REGION.VOID ? 0 : cellGlitchX),
           r * this.cellH, this.cellW, this.cellH
         );
-        const duplicateFeature = glitchCells !== 0 && (
-          reg === REGION.EYE || reg === REGION.MOUTH || reg === REGION.MOUTH_INNER
-        );
+        const duplicateFeature = glitchCells !== 0 && anchoredFeature;
         if (duplicateFeature) {
           ctx.globalAlpha = duplicateAlpha;
           ctx.drawImage(
@@ -426,14 +441,21 @@ export class CodefallRenderer {
     const glowSat = Math.round(this.theme.sat * 100);
     if (dyn.blink > 0.15) {
       ctx.globalCompositeOperation = 'lighter';
-      for (const eye of this.model.eyePositions(p, dyn)) {
+      const eyes = this.model.eyePositions(p, dyn);
+      for (let eyeIndex = 0; eyeIndex < eyes.length; eyeIndex++) {
+        const eye = eyes[eyeIndex];
+        const side = eyeIndex === 0 ? -1 : 1;
+        const desync = this.possession.type === 'ocular-desync' &&
+          this.possession.eyeSide === side ? this.possession.envelope : 0;
+        const eyeX = eye.x + side * desync * this.cellW;
         const rad = eye.r * 1.5;
-        const g = ctx.createRadialGradient(eye.x, eye.y, 0, eye.x, eye.y, rad);
+        const g = ctx.createRadialGradient(eyeX, eye.y, 0, eyeX, eye.y, rad);
         const a = Math.min(0.3, 0.13 * eye.glow * dyn.coherence);
-        g.addColorStop(0, `hsla(${glowHue}, ${glowSat}%, 72%, ${a})`);
+        const eyeSat = desync ? Math.round(glowSat * (1 - desync * 0.8)) : glowSat;
+        g.addColorStop(0, `hsla(${glowHue}, ${eyeSat}%, 72%, ${a})`);
         g.addColorStop(1, `hsla(${glowHue}, ${glowSat}%, 50%, 0)`);
         ctx.fillStyle = g;
-        ctx.fillRect(eye.x - rad, eye.y - rad, rad * 2, rad * 2);
+        ctx.fillRect(eyeX - rad, eye.y - rad, rad * 2, rad * 2);
       }
       ctx.globalCompositeOperation = 'source-over';
     }
@@ -449,6 +471,18 @@ export class CodefallRenderer {
       this.fps = Math.round(this._fpsN / this._fpsAcc);
       this._fpsAcc = 0; this._fpsN = 0;
     }
+    this.qualityController.sample(dt * 1000, {
+      hidden: !!this.platform.document.hidden,
+      resizing: !!this._resizing,
+    });
+  }
+
+  destroy() {
+    if (this._destroyed) return false;
+    this._destroyed = true;
+    this._debris.length = 0;
+    this._edgeCells.length = 0;
+    return true;
   }
 
   /** Reveal a short-lived machine port beneath displaced face tiles. */
@@ -544,7 +578,7 @@ export class CodefallRenderer {
           ctx.stroke();
         }
       } else {
-        const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
+        const flick = this.reducedMotion ? 1 : 0.82 + this._debrisRandom() * 0.18;
         if (this.quality !== 'low') {
           ctx.shadowBlur = 14;
           ctx.shadowColor = `hsla(${hue}, ${sat}%, 70%, 0.8)`;
@@ -570,7 +604,7 @@ export class CodefallRenderer {
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
     } else {
       // Thin bright cores: one long rotating arc, one short counter-arc.
-      const flick = this.reducedMotion ? 1 : 0.82 + Math.random() * 0.18;
+      const flick = this.reducedMotion ? 1 : 0.82 + this._debrisRandom() * 0.18;
       const useBlur = this.quality !== 'low' && !this.reducedMotion;
       const [longSpan, shortSpan] = codefallRingSpans(breach);
       if (useBlur) {
@@ -610,15 +644,15 @@ export class CodefallRenderer {
       const sourceCount = this._edgeCells.length - sourceStart;
       const spawnCount = this.quality === 'high' && breach > 0 ? 2 : 1;
       for (let spawned = 0; spawned < spawnCount && this._debris.length < cap; spawned++) {
-        const idx = this._edgeCells[sourceStart + ((Math.random() * sourceCount) | 0)];
+        const idx = this._edgeCells[sourceStart + ((this._debrisRandom() * sourceCount) | 0)];
         const c = idx % this.cols, r = (idx / this.cols) | 0;
         this._debris.push({
           x: c * this.cellW, y: r * this.cellH,
-          vx: -14 + Math.random() * 28,
-          vy: 4 + Math.random() * 20,
-          life: 1, decay: 0.4 + Math.random() * 0.5,
-          gi: CHAR_INDEX.get(DEBRIS[(Math.random() * DEBRIS.length) | 0]),
-          size: 0.55 + Math.random() * 0.8,
+          vx: -14 + this._debrisRandom() * 28,
+          vy: 4 + this._debrisRandom() * 20,
+          life: 1, decay: 0.4 + this._debrisRandom() * 0.5,
+          gi: CHAR_INDEX.get(DEBRIS[(this._debrisRandom() * DEBRIS.length) | 0]),
+          size: 0.55 + this._debrisRandom() * 0.8,
         });
       }
     }

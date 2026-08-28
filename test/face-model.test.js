@@ -104,9 +104,11 @@ test('both head geometry helpers avoid per-call arrays', () => {
 
 test('eye positions follow gaze and blink scales their glow', () => {
   const { model } = makeModel();
-  const centered = model.eyePositions(NEUTRAL, dynamics());
-  const shifted = model.eyePositions(NEUTRAL, dynamics({ gazeX: 1, gazeY: -0.5 }));
-  const blink = model.eyePositions(NEUTRAL, dynamics({ blink: 0.2 }));
+  const centered = model.eyePositions(NEUTRAL, dynamics()).map((eye) => ({ ...eye }));
+  const shifted = model.eyePositions(
+    NEUTRAL, dynamics({ gazeX: 1, gazeY: -0.5 }),
+  ).map((eye) => ({ ...eye }));
+  const blink = model.eyePositions(NEUTRAL, dynamics({ blink: 0.2 })).map((eye) => ({ ...eye }));
 
   for (let i = 0; i < centered.length; i++) {
     assert.ok(shifted[i].x > centered[i].x);

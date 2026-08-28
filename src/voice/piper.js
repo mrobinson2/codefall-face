@@ -24,6 +24,8 @@ export class PiperAdapter extends LocalSpeechAdapter {
     this._audioCtx = null;
     this._gain = null;
     this._source = null;
+    this._sourceFinish = null;
+    this._fx = null;
   }
 
   async init() {
@@ -32,6 +34,7 @@ export class PiperAdapter extends LocalSpeechAdapter {
       throw new Error('Piper TTS not available — run server/setup-piper.sh');
     }
     this.capabilities.tts = true;
+    this.capabilities.waveform = true;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     this.capabilities.stt = !!SR;
     this._SR = SR;
@@ -44,7 +47,10 @@ export class PiperAdapter extends LocalSpeechAdapter {
     this._gain = this._audioCtx.createGain();
     let tail = this._gain;
     const fx = this.config.voiceFx;
-    if (fx?.enabled) tail = attachGhostFx(this._audioCtx, this._gain, fx);
+    if (fx?.enabled) {
+      this._fx = attachGhostFx(this._audioCtx, this._gain, fx);
+      tail = this._fx.output;
+    }
     tail.connect(this._audioCtx.destination);
     this.emit('audionode', { ctx: this._audioCtx, node: tail });
   }
@@ -80,11 +86,19 @@ export class PiperAdapter extends LocalSpeechAdapter {
       src.connect(this._gain);
       this._source = src;
       this.emit('speechstart');
-      src.onended = () => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        src.onended = null;
+        try { src.disconnect(); } catch { /* already disconnected */ }
         if (this._source === src) this._source = null;
+        if (this._sourceFinish === finish) this._sourceFinish = null;
         this.emit('speechend');
         resolve();
       };
+      this._sourceFinish = finish;
+      src.onended = finish;
       src.start();
     });
   }
@@ -94,8 +108,11 @@ export class PiperAdapter extends LocalSpeechAdapter {
     if (this._source) {
       const src = this._source;
       this._source = null;
+      src.onended = null;
       try { src.stop(); } catch { /* already stopped */ }
     }
+    const finish = this._sourceFinish;
+    if (finish) finish();
   }
 
   setMuted(m) {
@@ -104,8 +121,15 @@ export class PiperAdapter extends LocalSpeechAdapter {
   }
 
   destroy() {
+    if (this._destroyed) return false;
     this.interrupt();
     this._stopRec();
+    if (this._fx) { this._fx.destroy(); this._fx = null; }
+    if (this._gain) {
+      try { this._gain.disconnect(); } catch { /* already disconnected */ }
+      this._gain = null;
+    }
     if (this._audioCtx) { this._audioCtx.close(); this._audioCtx = null; }
+    return super.destroy();
   }
 }

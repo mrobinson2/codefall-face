@@ -34,6 +34,10 @@ export const TILES_WIDE = '▪■□';
 export const TILES_FINE = '·▫▪';
 export const SEAMS = '¦—/\\';
 export const MACHINE = '0OØ◉#';
+export const ACTUATORS = '╪╫≡⌁';
+export const CONDUITS = '╎┊│╱╲';
+export const CAVITIES = '●◉Ø0';
+export const PLATES = '▤▥▦▪';
 
 export const MATERIAL = {
   NONE: 0,
@@ -43,11 +47,19 @@ export const MATERIAL = {
   APERTURE: 4,
   MACHINE: 5,
   LOOSE: 6,
+  ACTUATOR: 7,
+  CONDUIT: 8,
+  CAVITY: 9,
+  PLATE: 10,
 };
 
 export function wintermuteGlyphFor(material, intensity, seed) {
   const vocab = material === MATERIAL.FINE ? TILES_FINE
     : material === MATERIAL.SEAM ? SEAMS
+      : material === MATERIAL.ACTUATOR ? ACTUATORS
+        : material === MATERIAL.CONDUIT ? CONDUITS
+          : material === MATERIAL.CAVITY ? CAVITIES
+            : material === MATERIAL.PLATE ? PLATES
       : material === MATERIAL.APERTURE || material === MATERIAL.MACHINE ? MACHINE
         : TILES_WIDE;
   const safeIntensity = Math.max(0, Math.min(1, intensity));
@@ -67,12 +79,22 @@ export const REGION = {
   MOUTH: 6,
   MOUTH_INNER: 7,
   SHARD: 8, // fragmentation aura — pixel blocks scattered off the silhouette
+  BROW_RIDGE: 9,
+  ORBIT: 10,
+  NOSE_PLANE: 11,
+  NOSTRIL: 12,
+  CHEEK_PLANE: 13,
+  JAW_HINGE: 14,
+  CHIN_PLATE: 15,
+  TEMPLE_PORT: 16,
+  NECK_TENDON: 17,
 };
 
 // Full atlas charset: union of everything above, deduplicated.
 export const ATLAS_CHARS = [
   ...new Set((RAMP + RAIN + EDGE.join('') + EYE + MOUTH + BLOCKS + DEBRIS
-    + TILES_WIDE + TILES_FINE + SEAMS + MACHINE).split('')),
+    + TILES_WIDE + TILES_FINE + SEAMS + MACHINE
+    + ACTUATORS + CONDUITS + CAVITIES + PLATES).split('')),
 ];
 
 export const CHAR_INDEX = new Map(ATLAS_CHARS.map((c, i) => [c, i]));

@@ -20,7 +20,8 @@
  */
 
 export class SpeechEngine {
-  constructor() {
+  constructor(random = Math.random) {
+    this.random = random;
     this.out = { open: 0, wide: 0, tension: 0, energy: 0 };
     this._target = { open: 0, wide: 0, tension: 0, energy: 0 };
     this._analyser = null;
@@ -62,7 +63,7 @@ export class SpeechEngine {
   /** Tier 2: word-boundary pulse (Web Speech). Longer words → longer burst. */
   textPulse(wordLength = 4) {
     this._pulseT = Math.min(0.9, 0.12 + wordLength * 0.045);
-    this._pulseLevel = 0.55 + Math.random() * 0.45;
+    this._pulseLevel = 0.55 + this.random() * 0.45;
   }
 
   /** Tier 3: raw demo-mode pulse. */

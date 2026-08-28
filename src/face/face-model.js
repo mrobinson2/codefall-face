@@ -72,10 +72,16 @@ export function smoothHeadDistance(u, v, mouthOpen = 0, jawSharp = 0.5) {
 }
 
 export function classifyFaceMaterial(u, v, noise, region) {
-  if (region === REGION.EYE || region === REGION.MOUTH || region === REGION.NOSE) {
+  if (region === REGION.EYE || region === REGION.MOUTH || region === REGION.NOSE ||
+      region === REGION.BROW_RIDGE || region === REGION.NOSE_PLANE) {
     return MATERIAL.FINE;
   }
   if (region === REGION.MOUTH_INNER) return MATERIAL.MACHINE;
+  if (region === REGION.NOSTRIL || region === REGION.ORBIT) return MATERIAL.CAVITY;
+  if (region === REGION.JAW_HINGE) return MATERIAL.ACTUATOR;
+  if (region === REGION.NECK_TENDON) return MATERIAL.CONDUIT;
+  if (region === REGION.CHIN_PLATE || region === REGION.CHEEK_PLANE) return MATERIAL.PLATE;
+  if (region === REGION.TEMPLE_PORT) return MATERIAL.APERTURE;
   const port = u > 0.43 && u < 0.56 && v > 0.02 && v < 0.22;
   if (port) return MATERIAL.APERTURE;
   const seam = Math.abs(Math.abs(u) - (0.24 + (v + 0.2) * 0.24)) < 0.018;
@@ -90,6 +96,11 @@ export class FaceModel {
     this.u = null; // per-col normalized x
     this.v = null; // per-row normalized y
     this.noise = null; // static per-cell hash noise, rebuilt on resize
+    this._eyes = [
+      { x: 0, y: 0, r: 0, glow: 0 },
+      { x: 0, y: 0, r: 0, glow: 0 },
+    ];
+    this._mouth = { x: 0, y: 0 };
   }
 
   setGeometry(style) {
@@ -125,21 +136,22 @@ export class FaceModel {
 
   /** Screen-space eye centers (for the renderer's glow pass). */
   eyePositions(p, dyn) {
-    const out = [];
-    for (const s of [-1, 1]) {
-      out.push({
-        x: this.cx + s * 0.26 * this.scale + dyn.gazeX * 0.02 * this.scale,
-        y: this.cy + (-0.16 + dyn.gazeY * 0.02) * this.scale,
-        r: 0.13 * this.scale * p.eyeWidth,
-        glow: p.eyeGlow * dyn.blink,
-      });
+    for (let index = 0; index < 2; index++) {
+      const s = index === 0 ? -1 : 1;
+      const eye = this._eyes[index];
+      eye.x = this.cx + s * 0.26 * this.scale + dyn.gazeX * 0.02 * this.scale;
+      eye.y = this.cy + (-0.16 + dyn.gazeY * 0.02) * this.scale;
+      eye.r = 0.13 * this.scale * p.eyeWidth;
+      eye.glow = p.eyeGlow * dyn.blink;
     }
-    return out;
+    return this._eyes;
   }
 
   /** Mouth center in screen space (for speech turbulence focus). */
   mouthPosition() {
-    return { x: this.cx, y: this.cy + 0.55 * this.scale };
+    this._mouth.x = this.cx;
+    this._mouth.y = this.cy + 0.55 * this.scale;
+    return this._mouth;
   }
 
   /**
@@ -149,6 +161,19 @@ export class FaceModel {
    *   coherence, swayX, swayY, t }
    */
   fill(bright, region, sdf, material, p, dyn) {
+    let depth = null;
+    let substrate = null;
+    if (bright?.brightness) {
+      const buffers = bright;
+      dyn = sdf;
+      p = region;
+      bright = buffers.brightness;
+      region = buffers.region;
+      sdf = buffers.distance;
+      material = buffers.material;
+      depth = buffers.depth;
+      substrate = buffers.substrate;
+    }
     const { cols, rows } = this.grid;
     const U = this.u, V = this.v, N = this.noise;
     const t = dyn.t;
@@ -176,6 +201,8 @@ export class FaceModel {
       const v0 = V[r] + dyn.swayY;
       for (let c = 0; c < cols; c++, i++) {
         material[i] = MATERIAL.NONE;
+        if (depth) depth[i] = 0;
+        if (substrate) substrate[i] = 0;
 
         // Coherence scatter: at low coherence the face samples "wrong"
         // coordinates, so features dissolve back into the stream.
@@ -201,6 +228,15 @@ export class FaceModel {
         sdf[i] = d;
 
         if (d > 0.06) { // outside the head
+          const neckX = 0.16 + Math.max(0, v1 - 0.78) * 0.09;
+          if (v1 > 0.82 && v1 < 1.38 && Math.abs(Math.abs(u0) - neckX) < 0.035) {
+            bright[i] = (0.28 + nz * 0.2) * lum * coh;
+            region[i] = REGION.NECK_TENDON;
+            material[i] = MATERIAL.CONDUIT;
+            if (depth) depth[i] = 0.35;
+            if (substrate) substrate[i] = 0.92;
+            continue;
+          }
           // Fragmentation aura: the silhouette sheds static pixel
           // shards into the surrounding dark (denser near the edge).
           if (d < 0.5 && nz > 0.8) {
@@ -219,6 +255,8 @@ export class FaceModel {
           const jawPop = v1 > 0.1 ? 0.32 * p.jawSharp : 0.1;
           bright[i] = (0.68 + jawPop) * lum * coh;
           region[i] = REGION.EDGE;
+          if (depth) depth[i] = 0.22;
+          if (substrate) substrate[i] = Math.min(1, 0.42 + nz * 0.32);
           continue;
         }
 
@@ -243,6 +281,7 @@ export class FaceModel {
           h = h < 0 ? 0 : h > 1 ? 1 : h;
           const dxc = pax - bax * h, dyc = pay - bay * h;
           if (dxc * dxc + dyc * dyc < 0.022 * 0.022) b = Math.max(b, 0.42);
+          if (dxc * dxc + dyc * dyc < 0.035 * 0.035) reg = REGION.CHEEK_PLANE;
         }
 
         // Forehead circuit traces — machine etchings under the skin.
@@ -263,7 +302,7 @@ export class FaceModel {
             const dist = Math.abs(v1 - by);
             if (dist < browThick) {
               b = Math.max(b, 1.05 * (1 - dist / browThick) + 0.3);
-              reg = REGION.BROW;
+              reg = REGION.BROW_RIDGE;
             } else if (v1 > by && v1 < by + 0.09) {
               b -= 0.09; // supraorbital shadow — the shelf that hoods the eyes
             }
@@ -290,31 +329,36 @@ export class FaceModel {
           reg = REGION.EYE;
         } else if (er < 2.8) {
           b -= 0.07; // socket shadow
+          if (reg === REGION.FACE || reg === REGION.CHEEK_PLANE) {
+            b = Math.max(0.008, b);
+            reg = REGION.ORBIT;
+          }
         }
 
         // ---- nose: luminous ridge + nostril wings ---------------------
         if (reg === REGION.FACE) {
-          if (au < 0.028 && v1 > -0.06 && v1 < 0.26) {
+          if (au < 0.028 && v1 > -0.32 && v1 < 0.26) {
             b = Math.max(b, 0.55);
-            reg = REGION.NOSE;
+            reg = REGION.NOSE_PLANE;
           } else if (v1 > 0.24 && v1 < 0.31 && au > 0.04 && au < 0.11) {
-            b = Math.max(b, 0.62);
-            reg = REGION.NOSE;
+            b = 0.015;
+            reg = REGION.NOSTRIL;
           }
         }
 
         // ---- mouth ---------------------------------------------------
         if (reg === REGION.FACE && au < halfW + 0.05 && v1 > vM - 0.22 && v1 < vM + 0.24) {
           const xn = Math.min(1, au / halfW);
-          const mid = vM - p.mouthCurve * 0.12 * (xn * xn - 0.35);
+          const borrowedAsym = s * (p.asym * 0.012 + dyn.energy * 0.004 * Math.sin(t * 3.1));
+          const mid = vM - p.mouthCurve * 0.12 * (xn * xn - 0.35) + borrowedAsym;
           const yU = mid - open * 0.085;
           const yL = mid + open * 0.115;
           if (au <= halfW) {
             if (open < 0.25 && Math.abs(v1 - mid) < 0.014) {
               // Closed mouth: a dark labial crease between bright lips —
               // the slit is what makes the mouth legible at glyph scale.
-              b = 0.05;
-              reg = REGION.MOUTH_INNER;
+              b = 0.06;
+              reg = REGION.MOUTH;
             } else if (Math.abs(v1 - yU) < lipT || Math.abs(v1 - yL) < lipT) {
               b = Math.max(b, Math.min(1.15, lipBright));
               reg = REGION.MOUTH;
@@ -331,6 +375,29 @@ export class FaceModel {
           }
         }
 
+        // ---- structural machine landmarks ---------------------------
+        const port = u0 > 0.43 && u0 < 0.56 && v1 > 0.02 && v1 < 0.22;
+        const hingeWidth = this.geometry === 'smooth'
+          ? Math.max(0.32, 0.49 - Math.max(0, v1 - 0.3) * 0.28)
+          : headHalfWidth(v1, dyn.mouthOpen, p.jawSharp) - 0.035;
+        if (port) {
+          reg = REGION.TEMPLE_PORT;
+          b = 0.018;
+        } else if (v1 > 0.28 && v1 < 0.64 && Math.abs(au - hingeWidth) < 0.05) {
+          reg = REGION.JAW_HINGE;
+          b = Math.max(b, 0.32 + nz * 0.18);
+        } else if (v1 > 0.70 && v1 < 1.01 && au < 0.25 &&
+                   (au * au / 0.06 + (v1 - 0.83) * (v1 - 0.83) / 0.055) < 1) {
+          reg = REGION.CHIN_PLATE;
+          b = Math.max(b, 0.25 + nz * 0.12);
+        } else {
+          const neckX = 0.16 + Math.max(0, v1 - 0.78) * 0.09;
+          if (v1 > 0.68 && Math.abs(au - neckX) < 0.032) {
+            reg = REGION.NECK_TENDON;
+            b = Math.max(b, 0.28 + nz * 0.15);
+          }
+        }
+
         material[i] = classifyFaceMaterial(u0, v1, nz, reg);
 
         const foreheadLight = Math.max(0, 1 - Math.hypot(u0 / 0.5, (v1 + 0.52) / 0.42));
@@ -340,6 +407,16 @@ export class FaceModel {
         if (material[i] === MATERIAL.SEAM) b *= 0.38;
         if (material[i] === MATERIAL.APERTURE) b = 0.025;
         if (reg !== REGION.EYE) b *= sideFalloff;
+
+        const planeDepth = Math.max(0, Math.min(1,
+          (-d + 0.06) * 1.35 + foreheadLight * 0.2 + cheekLight * 0.16));
+        const machineDepth = Math.max(0, Math.min(1,
+          0.24 + nz * 0.38 +
+          (material[i] === MATERIAL.SEAM ? 0.28 : 0) +
+          (material[i] >= MATERIAL.ACTUATOR ? 0.3 : 0)));
+        if (depth) depth[i] = planeDepth;
+        if (substrate) substrate[i] = machineDepth;
+        b *= 0.62 + planeDepth * 0.5;
 
         bright[i] = b * lum * (reg === REGION.EYE ? 1 : coh * 0.85 + 0.15);
         region[i] = reg;

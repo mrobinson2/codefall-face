@@ -21,13 +21,13 @@
  */
 
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { extname, join, normalize } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import process from 'node:process';
+import { createStaticHandler } from './lib/static-handler.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -57,34 +57,10 @@ try {
   piperReady = existsSync(PIPER_BIN);
 } catch { /* piper not set up — /api/tts reports unavailable */ }
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-};
+const staticFiles = createStaticHandler({ root: ROOT });
 
 async function serveStatic(req, res) {
-  let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (path === '/') path = '/index.html';
-  const file = normalize(join(ROOT, path));
-  if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
-  try {
-    const s = await stat(file);
-    if (!s.isFile()) throw new Error('not a file');
-    const body = await readFile(file);
-    res.writeHead(200, {
-      'Content-Type': MIME[extname(file)] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
-    });
-    res.end(body);
-  } catch {
-    res.writeHead(404, { 'Content-Type': 'text/plain' }).end('404');
-  }
+  return staticFiles.handle(req, res);
 }
 
 async function handleLacy(req, res, path) {

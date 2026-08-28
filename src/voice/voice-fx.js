@@ -60,5 +60,17 @@ export function attachGhostFx(ctx, input, opts = {}) {
   hp.connect(lp);
   lp.connect(out);
 
-  return out;
+  let destroyed = false;
+  return {
+    output: out,
+    destroy() {
+      if (destroyed) return false;
+      destroyed = true;
+      try { osc.stop(); } catch { /* oscillator may already be stopped */ }
+      for (const node of [input, dry, wet, osc, oscAmp, shaper, hp, lp, out]) {
+        try { node.disconnect(); } catch { /* disconnected nodes are harmless */ }
+      }
+      return true;
+    },
+  };
 }

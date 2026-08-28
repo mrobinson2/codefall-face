@@ -1,194 +1,90 @@
-# Wiring up Codefall Face
+# Integrations
 
-Step-by-step guides for each voice / agent integration. All of them are
-independent — mix and match. Nothing here is required for the face
-itself: with zero configuration it runs on the local Web Speech provider.
+Codefall Face separates the body from the intelligence driving it. The face can run entirely locally, use a voice relay, or accept commands from an external agent.
 
----
+## Browser-local voice
 
-## 1. Azure Voice Live (real-time voice, the primary path)
+The default `provider: 'auto'` probes server-backed providers and falls back to local Web Speech. Use `provider: 'local'` to skip probing. Preferred voices, rate, and pitch live under `local` in `src/config.js`.
 
-What you get: streaming conversational voice — the face speaks with an
-Azure neural voice, hears the mic through server-side STT, supports
-barge-in interruption, and the mouth animates from the actual audio
-waveform.
+Local Web Speech audio cannot be routed through Web Audio, so `voiceFx` only affects providers that expose audio buffers.
 
-**Prerequisites:** an Azure AI Foundry (Cognitive Services) resource in
-a region with Voice Live availability, and its endpoint + key.
+## Azure Voice Live
 
-1. Copy the env template and fill in your resource:
+Keep Azure credentials in `server/.env`:
 
-   ```bash
-   cd server
-   cp .env.example .env
-   ```
+```ini
+AZURE_VOICE_LIVE_ENDPOINT=https://YOUR-RESOURCE.cognitiveservices.azure.com
+AZURE_VOICE_LIVE_KEY=your-key
+AZURE_VOICE_LIVE_MODEL=gpt-4o
+AZURE_VOICE_LIVE_API_VERSION=2025-05-01-preview
+```
 
-   ```ini
-   AZURE_VOICE_LIVE_ENDPOINT=https://YOUR-RESOURCE.cognitiveservices.azure.com
-   AZURE_VOICE_LIVE_KEY=<key from Azure portal → Keys and Endpoint>
-   AZURE_VOICE_LIVE_MODEL=gpt-4o
-   AZURE_VOICE_LIVE_API_VERSION=2025-05-01-preview
-   ```
+The browser connects to the same-origin `/relay` WebSocket. Provider initialization is generation-scoped, so a late Azure response cannot replace a newer fallback or survive destruction.
 
-2. Start the server with those vars loaded:
+## Piper
 
-   ```bash
-   export $(grep -v '^#' .env | xargs) && npm start
-   ```
+Run `server/setup-piper.sh`, then configure optional overrides:
 
-   The boot banner should say `Voice Live relay: ARMED`.
+```ini
+PIPER_BIN=./piper-venv/bin/piper
+PIPER_VOICE=./voices/en_US-danny-low.onnx
+```
 
-3. Open `http://localhost:8787`. The header should read `VOICE:AZURE`.
-   If the relay is unreachable the face auto-falls back to `VOICE:LOCAL`.
+Piper is the fully local neural TTS path. Generated sources and effects are disposed after playback or interruption.
 
-4. Pick the voice and persona in `src/config.js` (`azure.voice`,
-   `azure.instructions`), or override per deployment with
-   `window.CODEFALL_CONFIG` in `index.html`.
+## Lacy
 
-**Why the relay exists:** browsers cannot send auth headers on
-WebSockets, so the key lives in the Node process and frames are piped
-verbatim. Never put the key in client code or a query string.
+Lacy produces reply text through the backend proxy; the browser speaks the result locally:
 
-**Troubleshooting**
-- `VOICE:LOCAL` when you expected Azure → the relay refused (missing env
-  vars) or the WS handshake failed. Check the server banner and browser
-  debug panel (▚ button).
-- Serving the page over HTTPS? The relay must be `wss://` — put the Node
-  server behind your TLS proxy and set
-  `CODEFALL_CONFIG.azure.relayUrl = 'wss://yourhost/relay'`.
-- Protocol errors after a Microsoft api-version bump: the touch points
-  are `src/voice/azure-voice-live.js` and `AZURE_VOICE_LIVE_API_VERSION`.
+```ini
+LACY_API_KEY=your-key
+LACY_BASE=https://app.lacy.ai/api
+LACY_REPLY_PATH=/user/ai/reply
+```
 
----
+Select it with `window.CODEFALL_CONFIG = { provider: 'lacy' }`.
 
-## 1b. Piper (fully local neural voice — no cloud, no keys)
+## External agent hub
 
-What you get: a neural TTS voice ([Piper](https://github.com/rhasspy/piper),
-default voice `en_US-danny-low`) synthesized entirely on your machine.
-Because playback goes through Web Audio, this path gets the **ghost FX
-chain** (ring-modulator robot treatment) and **waveform-accurate lip
-sync** — the two things the browser's built-in voices can't have.
+Configure a shared token and optional event webhook:
 
-1. One-time setup (Python 3 required; downloads ~20 MB of model):
+```ini
+FACE_HUB_TOKEN=choose-a-long-random-string
+FACE_EVENTS_WEBHOOK=https://agent.example/webhooks/codefall-face
+```
 
-   ```bash
-   cd server && ./setup-piper.sh
-   ```
+Connect the page:
 
-2. Restart the server. The banner should show `Piper TTS: ARMED`.
+```js
+face.attachAgentSocket('/agent-hub?token=YOUR_TOKEN');
+```
 
-3. Open the page — provider auto-selection prefers Piper over the
-   browser voice (`VOICE:PIPER` in the header). Azure still wins when
-   its relay is configured.
+Drive it over HTTP:
 
-Swap voices by downloading any `.onnx` + `.onnx.json` pair from
-[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) into
-`server/voices/` and pointing `PIPER_VOICE` at it. Browse samples at
-https://rhasspy.github.io/piper-samples/. Tune or disable the robot
-treatment via `voiceFx` in `src/config.js`.
+```bash
+curl -X POST https://face.example/api/face/say \
+  -H "Authorization: Bearer $FACE_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"The perimeter has changed.","emotion":"confusion"}'
+```
 
-Latency note: the engine loads per request, so expect ~0.5–2 s before
-speech starts on a low-tier voice. Fine for an ambient ghost; if you
-need snappier, run Piper's HTTP server mode and point `/api/tts` at it.
+Or post exact commands to `/api/face/command`:
 
----
+```json
+{"type":"geometry","value":"chiseled"}
+{"type":"quality","value":"auto"}
+{"type":"visual-intensity","value":0.8}
+{"type":"speak","text":"I remember another face.","emotion":"sadness"}
+```
 
-## 2. Hermes (or any agent gateway) via the agent hub
+Accepted types are `speak`, `ask`, `emotion`, `listen`, `interrupt`, `mute`, `theme`, `geometry`, `quality`, and `visual-intensity`. Unknown fields and commands are rejected. Command messages are limited to 64 KiB and string fields to 16 KiB.
 
-What you get: a server-side agent that *possesses* the face — it speaks
-through it with chosen emotions and hears the human's transcripts.
+On connection, the face sends `hello` with its current snapshot. State, transcript, provider, quality, and visual-event changes are published afterward. During reconnect, only the latest snapshot is retained; transient history is not replayed. Backoff is bounded at 1, 2, 4, 8, and 15 seconds with jitter.
 
-1. Generate a hub token and start the server with it:
+## Wispr Flow and other dictation tools
 
-   ```bash
-   # in server/.env
-   FACE_HUB_TOKEN=<long random string>
-   # optional: push face events to your agent instead of polling
-   FACE_EVENTS_WEBHOOK=https://your-gateway/webhooks/codefall-face
-   ```
+Dictation tools work through the control deck text field without an adapter. For native hands-free behavior, use the face's listening command so transcripts can also reach the agent channel.
 
-2. Open the face with the agent channel connected (URL-encode the token
-   into the path):
+## Production boundary
 
-   ```
-   http://localhost:8787/?agent=%2Fagent-hub%3Ftoken%3D<token>
-   ```
-
-   Or from code: `face.attachAgentSocket('/agent-hub?token=<token>')`.
-
-3. Give your agent a "face" tool. It is one HTTP call:
-
-   ```bash
-   curl -X POST https://yourhost/api/face/say \
-     -H "Authorization: Bearer $FACE_HUB_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"text":"Gate opened. Three anomalies overnight.","emotion":"annoyance"}'
-   ```
-
-   A typical tool definition for the agent's prompt/config:
-
-   > `face_speak(text, emotion)` — say `text` aloud through the Codefall
-   > Face with one of: neutral, confusion, annoyance, anger, frustration,
-   > excitement, happiness, joy, sadness. Use emotions sparingly and
-   > deliberately.
-
-   Other commands go to `POST /api/face/command` with
-   `{"type": "emotion"|"listen"|"interrupt"|"mute"|"theme", ...}`.
-
-4. Hear the human. Two options:
-   - **Webhook** (recommended): every face event arrives as a JSON POST
-     to `FACE_EVENTS_WEBHOOK` — route `{"type":"transcript","role":"user",
-     "final":true,...}` into the agent as an incoming message.
-   - **Polling**: `GET /api/face/events?since=<lastSeq>` with the token.
-
-5. Exposure beyond localhost: put the whole server behind your existing
-   TLS/auth layer (e.g. a Cloudflare Tunnel with Access). The hub token
-   is defense in depth, not a substitute for transport security.
-
-The loop end-to-end: human speaks → face STT emits `transcript` → hub →
-webhook → agent thinks → agent calls `face_speak` → hub broadcasts →
-face speaks with the emotion. The face is a body; the agent is the ghost.
-
----
-
-## 3. Wispr Flow (dictation)
-
-Nothing to integrate. Wispr Flow types into whatever field has focus:
-
-1. Click the **transmit words to the ghost…** input.
-2. Dictate with Flow.
-3. Press Enter (or TALK).
-
-The text goes through `ask()` — with an agent connected, the agent
-answers; otherwise the current provider handles it. For hands-free use
-prefer the **LISTEN** button (browser STT) or the Azure path, both of
-which stream transcripts to any connected agent automatically.
-
----
-
-## 4. Lacy.ai (fallback, with an honest caveat)
-
-Lacy.ai is telephony-first (AI phone calls, SMS, WhatsApp). It does not
-currently offer a browser realtime audio SDK, so this adapter is a
-hybrid: **Lacy generates the reply text** (via your account's AI), and
-the browser **speaks it with local synthesis**.
-
-1. In `server/.env`:
-
-   ```ini
-   LACY_API_KEY=<your Lacy API key>
-   LACY_BASE=https://app.lacy.ai/api
-   LACY_REPLY_PATH=/user/ai/reply   # adjust to your account's endpoint
-   ```
-
-2. Select the provider in the page config:
-
-   ```html
-   <script>window.CODEFALL_CONFIG = { provider: 'lacy' };</script>
-   ```
-
-3. The adapter health-checks `/api/lacy/health` at boot and reports
-   clearly if the proxy isn't configured.
-
-If Lacy ships browser voice streaming, `src/voice/lacy.js` is the single
-file to upgrade from synthesized playback to real streamed audio.
+Do not expose provider relays or the agent hub without TLS, origin restrictions, and upstream authentication. Browser configuration is public. Credentials belong only in environment variables on the server.

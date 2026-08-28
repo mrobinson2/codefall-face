@@ -3,6 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "build": "node scripts/build-static.mjs",
+    "test": "node --test test/*.test.js",
+    "test:unit": "node --test test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
+    "test:browser": "playwright test",
+    "test:browser:update": "playwright test test/browser/visual.spec.js --update-snapshots",
+    "test:all": "npm run test:unit && npm run test:browser"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.0"
   }
 }

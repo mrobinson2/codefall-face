@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Static host + Azure Voice Live relay + Lacy proxy for Codefall Face",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node --test ../test/server-*.test.js"
   },
   "engines": { "node": ">=20" },
   "dependencies": {

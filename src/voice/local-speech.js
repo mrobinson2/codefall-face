@@ -23,6 +23,10 @@ export class LocalSpeechAdapter extends VoiceAdapter {
     this._recognition = null;
     this._heartbeat = null;
     this._voice = null;
+    this._silent = null;
+    this._speechFinish = null;
+    this._voiceTimer = null;
+    this._voiceHandler = null;
   }
 
   async init() {
@@ -36,6 +40,18 @@ export class LocalSpeechAdapter extends VoiceAdapter {
 
     // Voice lists load async in most browsers.
     await new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (this._voiceTimer != null) clearTimeout(this._voiceTimer);
+        this._voiceTimer = null;
+        if (speechSynthesis.onvoiceschanged === this._voiceHandler) {
+          speechSynthesis.onvoiceschanged = null;
+        }
+        this._voiceHandler = null;
+        resolve();
+      };
       const pick = () => {
         const voices = speechSynthesis.getVoices();
         if (!voices.length) return false;
@@ -44,12 +60,13 @@ export class LocalSpeechAdapter extends VoiceAdapter {
           voices.find((v) => prefs.some((p) => v.name.includes(p))) ||
           voices.find((v) => v.lang.startsWith('en')) ||
           voices[0];
-        resolve();
+        done();
         return true;
       };
       if (!pick()) {
+        this._voiceHandler = pick;
         speechSynthesis.onvoiceschanged = pick;
-        setTimeout(resolve, 1500); // don't hang if the event never fires
+        this._voiceTimer = setTimeout(done, 1500); // don't hang if the event never fires
       }
     });
     this.emit('ready');
@@ -57,6 +74,7 @@ export class LocalSpeechAdapter extends VoiceAdapter {
 
   async speak(text, opts = {}) {
     this.interrupt();
+    if (this._destroyed) throw new Error('local adapter has been destroyed');
     if (this.muted) {
       // Muted: still animate — fake pulses paced like real speech.
       return this._speakSilently(text, opts);
@@ -80,13 +98,22 @@ export class LocalSpeechAdapter extends VoiceAdapter {
         const len = e.charLength || 4;
         this.emit('pulse', { level: 0.6 + Math.random() * 0.4, length: len });
       };
+      let finished = false;
       const done = () => {
+        if (finished) return;
+        finished = true;
         clearInterval(this._heartbeat);
         this._heartbeat = null;
+        u.onstart = null;
+        u.onboundary = null;
+        u.onend = null;
+        u.onerror = null;
         this._utterance = null;
+        if (this._speechFinish === done) this._speechFinish = null;
         this.emit('speechend');
         resolve();
       };
+      this._speechFinish = done;
       u.onend = done;
       u.onerror = done;
       speechSynthesis.speak(u);
@@ -99,11 +126,21 @@ export class LocalSpeechAdapter extends VoiceAdapter {
       this.emit('speechstart');
       const words = text.split(/\s+/);
       let i = 0;
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        if (this._silent != null) clearTimeout(this._silent);
+        this._silent = null;
+        if (this._speechFinish === done) this._speechFinish = null;
+        this.emit('speechend');
+        resolve();
+      };
+      this._speechFinish = done;
       const step = () => {
         if (i >= words.length || !this._silent) {
-          this._silent = null;
-          this.emit('speechend');
-          return resolve();
+          done();
+          return;
         }
         this.emit('pulse', { level: 0.55 + Math.random() * 0.45, length: words[i].length });
         i++;
@@ -159,17 +196,26 @@ export class LocalSpeechAdapter extends VoiceAdapter {
   async stopListening() { this._stopRec(); }
 
   interrupt() {
-    if (this._silent) { clearTimeout(this._silent); this._silent = null; this.emit('speechend'); }
+    if (this._silent) { clearTimeout(this._silent); this._silent = null; }
     if (this._heartbeat) { clearInterval(this._heartbeat); this._heartbeat = null; }
     if (this._utterance || speechSynthesis.speaking) {
       this._utterance = null;
       speechSynthesis.cancel();
-      this.emit('speechend');
     }
+    const finish = this._speechFinish;
+    if (finish) finish();
   }
 
   destroy() {
+    if (this._destroyed) return false;
     this.interrupt();
     this._stopRec();
+    if (this._voiceTimer != null) clearTimeout(this._voiceTimer);
+    this._voiceTimer = null;
+    if (speechSynthesis.onvoiceschanged === this._voiceHandler) {
+      speechSynthesis.onvoiceschanged = null;
+    }
+    this._voiceHandler = null;
+    return super.destroy();
   }
 }

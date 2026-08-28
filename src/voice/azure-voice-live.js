@@ -53,7 +53,9 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
   constructor(config) {
     super(config);
     this.name = 'azure';
-    this.capabilities = { tts: true, stt: true, conversational: true };
+    this.capabilities = {
+      tts: true, stt: true, conversational: true, waveform: true, retry: true,
+    };
     this._ws = null;
     this._audioCtx = null;
     this._gain = null;
@@ -64,6 +66,10 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
     this._listening = false;
     this._speaking = false;
     this._speakResolve = null;
+    this._drainTimer = null;
+    this._connectTimer = null;
+    this._connectingWs = null;
+    this._fx = null;
   }
 
   _relayUrl() {
@@ -82,12 +88,15 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
     return new Promise((resolve, reject) => {
       let settled = false;
       const ws = new WebSocket(this._relayUrl());
-      const timer = setTimeout(() => {
+      this._connectingWs = ws;
+      const timer = this._connectTimer = setTimeout(() => {
         if (!settled) { settled = true; ws.close(); reject(new Error('relay timeout')); }
       }, 4000);
 
       ws.onopen = () => {
         clearTimeout(timer);
+        this._connectTimer = null;
+        this._connectingWs = null;
         this._ws = ws;
         this._send({
           type: 'session.update',
@@ -103,6 +112,8 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
       };
       ws.onerror = () => {
         clearTimeout(timer);
+        this._connectTimer = null;
+        this._connectingWs = null;
         if (!settled) { settled = true; reject(new Error('relay unreachable')); }
         else this.emit('error', { message: 'Voice Live socket error' });
       };
@@ -129,7 +140,10 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
     this._gain = this._audioCtx.createGain();
     let tail = this._gain;
     const fx = this.config.voiceFx;
-    if (fx?.enabled) tail = attachGhostFx(this._audioCtx, this._gain, fx);
+    if (fx?.enabled) {
+      this._fx = attachGhostFx(this._audioCtx, this._gain, fx);
+      tail = this._fx.output;
+    }
     tail.connect(this._audioCtx.destination);
     // The speech engine analyses the post-FX signal, so the mouth
     // tracks what the human actually hears.
@@ -188,7 +202,10 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
     src.start(this._playHead);
     this._playHead += buf.duration;
     this._sources.add(src);
-    src.onended = () => this._sources.delete(src);
+    src.onended = () => {
+      this._sources.delete(src);
+      try { src.disconnect(); } catch { /* already disconnected */ }
+    };
 
     if (!this._speaking) {
       this._speaking = true;
@@ -199,24 +216,34 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
   _endSpeechWhenDrained() {
     const remaining = this._audioCtx
       ? Math.max(0, this._playHead - this._audioCtx.currentTime) : 0;
-    setTimeout(() => {
-      if (this._speaking) {
-        this._speaking = false;
-        this.emit('speechend');
-        if (this._speakResolve) { this._speakResolve(); this._speakResolve = null; }
-      }
+    if (this._drainTimer != null) clearTimeout(this._drainTimer);
+    this._drainTimer = setTimeout(() => {
+      this._drainTimer = null;
+      this._finishSpeech();
     }, remaining * 1000 + 60);
   }
 
-  _flushPlayback() {
-    for (const s of this._sources) { try { s.stop(); } catch { /* ok */ } }
-    this._sources.clear();
-    this._playHead = 0;
+  _finishSpeech() {
     if (this._speaking) {
       this._speaking = false;
       this.emit('speechend');
-      if (this._speakResolve) { this._speakResolve(); this._speakResolve = null; }
     }
+    const resolve = this._speakResolve;
+    this._speakResolve = null;
+    if (resolve) resolve();
+  }
+
+  _flushPlayback() {
+    if (this._drainTimer != null) clearTimeout(this._drainTimer);
+    this._drainTimer = null;
+    for (const s of this._sources) {
+      s.onended = null;
+      try { s.stop(); } catch { /* ok */ }
+      try { s.disconnect(); } catch { /* ok */ }
+    }
+    this._sources.clear();
+    this._playHead = 0;
+    this._finishSpeech();
   }
 
   /** Say `text` verbatim through the realtime voice. */
@@ -288,9 +315,33 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
   }
 
   destroy() {
+    if (this._destroyed) return false;
     this.interrupt();
     this.stopListening();
-    if (this._ws) { this._ws.onclose = null; this._ws.close(); this._ws = null; }
+    if (this._connectTimer != null) clearTimeout(this._connectTimer);
+    this._connectTimer = null;
+    if (this._connectingWs) {
+      this._connectingWs.onopen = null;
+      this._connectingWs.onerror = null;
+      this._connectingWs.onclose = null;
+      this._connectingWs.onmessage = null;
+      try { this._connectingWs.close(); } catch { /* ok */ }
+      this._connectingWs = null;
+    }
+    if (this._ws) {
+      this._ws.onopen = null;
+      this._ws.onerror = null;
+      this._ws.onclose = null;
+      this._ws.onmessage = null;
+      this._ws.close();
+      this._ws = null;
+    }
+    if (this._fx) { this._fx.destroy(); this._fx = null; }
+    if (this._gain) {
+      try { this._gain.disconnect(); } catch { /* ok */ }
+      this._gain = null;
+    }
     if (this._audioCtx) { this._audioCtx.close(); this._audioCtx = null; }
+    return super.destroy();
   }
 }
