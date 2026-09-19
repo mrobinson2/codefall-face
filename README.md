@@ -117,6 +117,15 @@ npm run test:browser
 
 The Node suite covers the deterministic runtime, anatomy, render buffers, visual events, quality adaptation, lifecycle, voice/provider races, command protocol, UI preferences, server safety, and control deck. The Playwright suite adds browser lifecycle, accessibility, visual, and performance gates.
 
+## Deploy
+
+Pushes to `main` run the test suite, then deploy the static build to GitHub Pages and to Cloudflare at [face.mrtek.ai](https://face.mrtek.ai). The Cloudflare job uses `wrangler.jsonc` (Workers static assets) and needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets. Deploy manually with:
+
+```bash
+npm run build
+npx wrangler deploy
+```
+
 ## Architecture
 
 The browser facade owns lifecycle and connects four independent layers: deterministic runtime state, rendering, provider management, and UI/agent adapters. The renderer consumes a frame snapshot; it does not own conversational state. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

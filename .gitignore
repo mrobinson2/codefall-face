@@ -7,3 +7,4 @@ server/piper-venv/
 server/voices/
 .codegraph/
 .superpowers/
+.wrangler/
