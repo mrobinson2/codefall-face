@@ -246,6 +246,32 @@ test('a closed long-poll request stops waiting and never writes', async () => {
   assert.equal(timers.size, 0);
 });
 
+test('an oversized command body is rejected with 413 before buffering it whole', async () => {
+  const { hub } = makeHub();
+  const req = request({
+    method: 'POST',
+    url: '/api/face/command',
+    body: JSON.stringify({ type: 'speak', text: 'x'.repeat(70 * 1024) }),
+  });
+  const res = response();
+  await hub.handleHttp(req, res, '/api/face/command');
+  assert.equal(res.status, 413);
+});
+
+test('concurrent listeners each receive the same transcript (broadcast semantics)', async () => {
+  const { hub } = makeHub();
+  const socket = fakeSocket();
+  hub.handleSocket(socket);
+  const resA = response();
+  const resB = response();
+  const pendingA = hub.handleHttp(request({ url: '/api/face/listen?timeout=30000' }), resA, '/api/face/listen');
+  const pendingB = hub.handleHttp(request({ url: '/api/face/listen?timeout=30000' }), resB, '/api/face/listen');
+  socket.emit('message', Buffer.from(JSON.stringify({ type: 'transcript', role: 'user', text: 'both hear this', final: true })));
+  await Promise.all([pendingA, pendingB]);
+  assert.equal(resA.json().event.text, 'both hear this');
+  assert.equal(resB.json().event.text, 'both hear this');
+});
+
 test('recorded events fan out to the configured webhook', async () => {
   const { hub, webhookCalls } = makeHub({ webhook: 'https://example.test/hook' });
   hub.recordEvent({ type: 'state', state: 'idle' });

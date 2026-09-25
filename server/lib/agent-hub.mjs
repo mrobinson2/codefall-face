@@ -7,7 +7,7 @@
  */
 
 import { parseAgentCommand } from '../../src/agent/commands.js';
-import { sendJson } from './http-utils.mjs';
+import { readJson, sendJson, HttpInputError } from './http-utils.mjs';
 
 const WS_OPEN = 1;
 const LISTEN_MIN_MS = 1000;
@@ -65,18 +65,16 @@ export function createAgentHub({
     return entry;
   }
 
-  async function readBody(req) {
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    return body;
-  }
-
+  // Broadcast semantics: every in-flight listener receives the same
+  // transcript, mirroring how commands broadcast to every face. Callers
+  // needing correlation can compare the returned event's seq.
   function waitForTranscript(req, timeoutMs) {
     return new Promise((resolve) => {
       const waiter = {};
       const settle = (event) => {
         waiters.delete(waiter);
         timers.clearTimeout(timer);
+        req.off?.('close', waiter.cancel);
         resolve(event);
       };
       const timer = timers.setTimeout(() => settle(null), timeoutMs);
@@ -116,8 +114,9 @@ export function createAgentHub({
     if ((path === '/api/face/say' || path === '/api/face/command') && req.method === 'POST') {
       let cmd;
       try {
-        cmd = JSON.parse((await readBody(req)) || '{}');
-      } catch {
+        cmd = await readJson(req, { maxBytes: 65536 });
+      } catch (error) {
+        if (error instanceof HttpInputError) return sendJson(res, error.status, { error: error.message });
         return sendJson(res, 400, { error: 'bad JSON' });
       }
       if (path === '/api/face/say') {
