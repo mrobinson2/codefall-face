@@ -53,7 +53,10 @@ FACE_HUB_TOKEN=choose-a-long-random-string
 FACE_EVENTS_WEBHOOK=https://agent.example/webhooks/codefall-face
 ```
 
-Connect the page:
+When the face server hosts the page, the browser probes `/api/face/status`
+on boot and attaches to `/agent-hub` automatically (configure with
+`window.CODEFALL_CONFIG = { agent: { url: 'auto' | '/agent-hub' | null, token } }`;
+static deploys stay detached). Attach manually with:
 
 ```js
 face.attachAgentSocket('/agent-hub?token=YOUR_TOKEN');

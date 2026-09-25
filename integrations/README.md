@@ -7,10 +7,12 @@ Both integrations talk to the face server's agent hub, so start that first:
 cd server && npm start   # http://localhost:8787
 ```
 
-Open `http://localhost:8787` in a browser and attach the face to the hub
-(the control deck's docking control, or `face.attachAgentSocket('/agent-hub')`).
-If you set `FACE_HUB_TOKEN` on the server, pass the same value to the
-integrations below and append `?token=...` when attaching the browser.
+Open `http://localhost:8787` in a browser — the page detects the face
+server and attaches to the agent hub automatically. If you set
+`FACE_HUB_TOKEN` on the server, pass the same value to the integrations
+below and give the page the token too, either via
+`window.CODEFALL_CONFIG = { agent: { token: '...' } }` or by opening
+`http://localhost:8787/?agent=/agent-hub%3Ftoken%3D...`.
 
 ## MCP server (Claude Code and Codex)
 

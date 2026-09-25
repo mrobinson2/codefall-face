@@ -56,6 +56,18 @@ const defaults = {
     highpassHz: 220, // cut the warm lows — ghosts have no chest
   },
 
+  agent: {
+    // Agent hub attachment on boot:
+    //   'auto'  → attach to same-origin /agent-hub when the face server is
+    //             hosting the page (probed via /api/face/status); static
+    //             deploys stay detached.
+    //   '/agent-hub' or a full ws(s) URL → always attach there.
+    //   null    → never attach automatically (?agent= still works).
+    url: 'auto',
+    // Appended as ?token= when the hub requires FACE_HUB_TOKEN.
+    token: null,
+  },
+
   face: {
     // 'codefall' (neon green matrix) | 'wintermute' (ice-white voxel ghost)
     theme: 'wintermute',

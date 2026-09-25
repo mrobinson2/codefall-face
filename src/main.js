@@ -2,6 +2,7 @@
 import { CodefallFace } from './codefall-face.js';
 import { ControlDeck } from './ui/control-deck.js';
 import { runDemo, stopDemo } from './demo/demo.js';
+import { resolveAgentUrl } from './agent/auto-attach.js';
 
 const params = new URLSearchParams(location.search);
 const voice = params.get('voice');
@@ -27,8 +28,10 @@ const startTheme = params.get('theme');
 if (startTheme) face.setTheme(startTheme);
 const startGeometry = params.get('geometry');
 if (startGeometry) face.setGeometry(startGeometry);
-const agentUrl = params.get('agent');
-if (agentUrl) face.attachAgentSocket(agentUrl);
+resolveAgentUrl({ param: params.get('agent'), config: face.config.agent, location })
+  .then((agentUrl) => {
+    if (agentUrl && face.state !== 'destroyed') face.attachAgentSocket(agentUrl);
+  });
 if (params.get('pose') === 'talk') {
   face.engine.setSpeaking(true);
   window.setInterval(() => face.engine.textPulse(3 + Math.random() * 6), 160);
