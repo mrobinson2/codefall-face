@@ -8,3 +8,5 @@ server/voices/
 .codegraph/
 .superpowers/
 .wrangler/
+test-results/
+playwright-report/
