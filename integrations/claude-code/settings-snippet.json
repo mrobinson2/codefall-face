@@ -1,0 +1,35 @@
+{
+  "//": "Merge into ~/.claude/settings.json (or .claude/settings.json in a project). Replace /path/to/codefall-face with your checkout. Optional env: FACE_HOOK_SPEAK=summary|status|off, FACE_HOOK_MAX_CHARS=280, CODEFALL_FACE_URL, FACE_HUB_TOKEN.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /path/to/codefall-face/integrations/claude-code/face-hook.mjs"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /path/to/codefall-face/integrations/claude-code/face-hook.mjs"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /path/to/codefall-face/integrations/claude-code/face-hook.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

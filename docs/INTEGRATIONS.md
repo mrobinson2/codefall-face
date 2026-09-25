@@ -77,9 +77,18 @@ Or post exact commands to `/api/face/command`:
 {"type":"speak","text":"I remember another face.","emotion":"sadness"}
 ```
 
-Accepted types are `speak`, `ask`, `emotion`, `listen`, `interrupt`, `mute`, `theme`, `geometry`, `quality`, and `visual-intensity`. Unknown fields and commands are rejected. Command messages are limited to 64 KiB and string fields to 16 KiB.
+Accepted types are `speak`, `ask`, `emotion`, `listen`, `interrupt`, `mute`, `theme`, `geometry`, `quality`, and `visual-intensity`. The server validates every command against the same schema the browser enforces, so unknown fields and commands are rejected before broadcast. Command messages are limited to 64 KiB and string fields to 16 KiB.
+
+To capture speech, long-poll `GET /api/face/listen?timeout=30000` after sending `{"type":"listen","on":true}`. The request resolves with the next final user transcript (`{"event":{"text":...},"lastSeq":n}`) or `{"event":null}` on timeout. Timeouts clamp to 1–120 seconds.
 
 On connection, the face sends `hello` with its current snapshot. State, transcript, provider, quality, and visual-event changes are published afterward. During reconnect, only the latest snapshot is retained; transient history is not replayed. Backoff is bounded at 1, 2, 4, 8, and 15 seconds with jitter.
+
+## Claude Code and Codex
+
+The [integrations directory](../integrations/README.md) ships two ready-made bridges:
+
+- **MCP server** (`integrations/mcp/codefall-face-mcp.mjs`) — a zero-dependency stdio MCP server for any MCP client. Register it with `claude mcp add codefall-face -- node .../codefall-face-mcp.mjs` or a Codex `[mcp_servers.codefall_face]` block, and the agent gains `face_speak`, `face_emotion`, `face_ask`, `face_listen`, `face_set`, and `face_status` tools — spoken output and transcribed voice input in one round trip.
+- **Claude Code hooks bridge** (`integrations/claude-code/face-hook.mjs`) — makes the face mirror a session passively: focus emotion on prompt submit, a spoken summary when Claude stops, a spoken alert on notifications. Configure with `integrations/claude-code/settings-snippet.json`.
 
 ## Wispr Flow and other dictation tools
 

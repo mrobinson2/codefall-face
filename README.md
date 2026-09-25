@@ -99,6 +99,8 @@ face.attachAgentSocket('/agent-hub?token=YOUR_TOKEN');
 
 The strict command protocol supports `speak`, `ask`, `emotion`, `listen`, `interrupt`, `mute`, `theme`, `geometry`, `quality`, and `visual-intensity`. Messages are capped at 64 KiB and validated against exact schemas. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
+For Claude Code and Codex, [integrations/](integrations/README.md) ships a zero-dependency MCP server (`face_speak`, `face_ask`, `face_listen`, …) and a Claude Code hooks bridge that makes the face mirror the session — thinking on prompt submit, spoken summaries on stop, spoken alerts on notifications.
+
 ## Quality and accessibility
 
 The auto quality controller uses 120-frame windows, conservative downgrade/upgrade thresholds, and cooldowns to avoid oscillation. Hidden and resize frames are excluded. Reduced-motion mode suppresses displacement-heavy events while preserving state and contrast cues.
