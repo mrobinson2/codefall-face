@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import process from 'node:process';
 import { createStaticHandler } from './lib/static-handler.mjs';
+import { createAgentHub } from './lib/agent-hub.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -101,77 +102,10 @@ async function handleLacy(req, res, path) {
 
 // ---- Agent hub ------------------------------------------------------------
 // Faces connect via WS at /agent-hub; agents command via HTTP /api/face/*.
+// Logic lives in lib/agent-hub.mjs; commands are validated against the same
+// schema the browser enforces (src/agent/commands.js).
 
-const faces = new Set(); // connected face sockets
-const hubEvents = []; // ring buffer of face→agent events
-let hubSeq = 0;
-const HUB_EVENTS_MAX = 200;
-// Commands an agent may broadcast — mirrors CodefallFace.attachAgentSocket.
-const HUB_COMMANDS = new Set(['speak', 'ask', 'emotion', 'listen', 'interrupt', 'mute', 'theme']);
-
-function hubAuthorized(req) {
-  if (!FACE_HUB_TOKEN) return true;
-  const url = new URL(req.url, 'http://x');
-  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  return bearer === FACE_HUB_TOKEN || url.searchParams.get('token') === FACE_HUB_TOKEN;
-}
-
-function hubBroadcast(cmd) {
-  let delivered = 0;
-  const msg = JSON.stringify(cmd);
-  for (const ws of faces) {
-    if (ws.readyState === WebSocket.OPEN) { ws.send(msg); delivered++; }
-  }
-  return delivered;
-}
-
-function hubRecordEvent(event) {
-  const entry = { seq: ++hubSeq, ts: new Date().toISOString(), ...event };
-  hubEvents.push(entry);
-  if (hubEvents.length > HUB_EVENTS_MAX) hubEvents.shift();
-  if (FACE_EVENTS_WEBHOOK) {
-    fetch(FACE_EVENTS_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(entry),
-    }).catch((err) => console.error('[hub] webhook error:', err.message));
-  }
-}
-
-async function handleFaceApi(req, res, path) {
-  if (!hubAuthorized(req)) {
-    res.writeHead(401, { 'Content-Type': 'application/json' })
-      .end(JSON.stringify({ error: 'missing or bad FACE_HUB_TOKEN' }));
-    return;
-  }
-  const json = (code, obj) => {
-    res.writeHead(code, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(obj));
-  };
-
-  if (path === '/api/face/status' && req.method === 'GET') {
-    return json(200, { faces: faces.size, lastSeq: hubSeq });
-  }
-  if (path === '/api/face/events' && req.method === 'GET') {
-    const since = Number(new URL(req.url, 'http://x').searchParams.get('since') || 0);
-    return json(200, { events: hubEvents.filter((e) => e.seq > since), lastSeq: hubSeq });
-  }
-  if ((path === '/api/face/say' || path === '/api/face/command') && req.method === 'POST') {
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    let cmd;
-    try { cmd = JSON.parse(body || '{}'); } catch { return json(400, { error: 'bad JSON' }); }
-    if (path === '/api/face/say') {
-      if (!cmd.text) return json(400, { error: 'text required' });
-      cmd = { type: 'speak', text: cmd.text, emotion: cmd.emotion };
-    }
-    if (!HUB_COMMANDS.has(cmd.type)) {
-      return json(400, { error: `unknown command type; allowed: ${[...HUB_COMMANDS].join(', ')}` });
-    }
-    return json(200, { delivered: hubBroadcast(cmd) });
-  }
-  json(404, { error: 'not found' });
-}
+const hub = createAgentHub({ token: FACE_HUB_TOKEN, webhook: FACE_EVENTS_WEBHOOK });
 
 // ---- Piper TTS endpoint ---------------------------------------------------
 async function handleTts(req, res, path) {
@@ -221,7 +155,7 @@ async function handleTts(req, res, path) {
 const server = http.createServer((req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
   if (path.startsWith('/api/lacy/')) return handleLacy(req, res, path);
-  if (path.startsWith('/api/face/')) return handleFaceApi(req, res, path);
+  if (path.startsWith('/api/face/')) return hub.handleHttp(req, res, path);
   if (path.startsWith('/api/tts')) return handleTts(req, res, path);
   return serveStatic(req, res);
 });
@@ -236,7 +170,7 @@ const hubWss = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
   const path = new URL(req.url, 'http://x').pathname;
   if (path === '/agent-hub') {
-    if (!hubAuthorized(req)) {
+    if (!hub.authorized(req)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
@@ -253,20 +187,7 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 
-hubWss.on('connection', (ws) => {
-  faces.add(ws);
-  hubRecordEvent({ type: 'face_connected', faces: faces.size });
-  ws.on('message', (data) => {
-    let event;
-    try { event = JSON.parse(data.toString()); } catch { return; }
-    hubRecordEvent(event);
-  });
-  const drop = () => {
-    if (faces.delete(ws)) hubRecordEvent({ type: 'face_disconnected', faces: faces.size });
-  };
-  ws.on('close', drop);
-  ws.on('error', drop);
-});
+hubWss.on('connection', (ws) => hub.handleSocket(ws));
 
 wss.on('connection', (client) => {
   const wsUrl =
