@@ -107,6 +107,30 @@ test('unknown events and off-mode notifications produce no speech commands', () 
   assert.equal(off.every((c) => c.path !== '/api/face/say'), true);
 });
 
+test('Codex agent-turn-complete notifications speak the last assistant message', () => {
+  const commands = mapHookEvent(
+    { type: 'agent-turn-complete', 'last-assistant-message': 'Refactor **done**, `npm test` is green.' },
+    {},
+  );
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].path, '/api/face/say');
+  assert.match(commands[0].body.text, /Refactor done/);
+  assert.doesNotMatch(commands[0].body.text, /\*\*/);
+});
+
+test('Codex notifications respect status and off modes and ignore unknown types', () => {
+  const payload = { type: 'agent-turn-complete', 'last-assistant-message': 'details' };
+  assert.equal(mapHookEvent(payload, { mode: 'status' })[0].body.text, 'Done.');
+  const off = mapHookEvent(payload, { mode: 'off' });
+  assert.deepEqual(off, [{ path: '/api/face/command', body: { type: 'emotion', emotion: 'neutral' } }]);
+  assert.deepEqual(mapHookEvent({ type: 'session-configured' }, {}), []);
+});
+
+test('Codex agent-turn-complete without a message falls back to a fixed phrase', () => {
+  const commands = mapHookEvent({ type: 'agent-turn-complete' }, {});
+  assert.equal(commands[0].body.text, 'Done.');
+});
+
 test('runHook posts mapped commands with auth and always succeeds', async () => {
   const calls = [];
   const code = await runHook({

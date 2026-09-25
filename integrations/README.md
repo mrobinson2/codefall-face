@@ -66,6 +66,18 @@ Tune it with environment variables on the hook command:
 The hook always exits 0 and times out after two seconds, so a stopped face
 server never slows the session down.
 
+## Codex notifications
+
+The same hook script understands Codex `notify` payloads. In
+`~/.codex/config.toml`:
+
+```toml
+notify = ["node", "/path/to/codefall-face/integrations/claude-code/face-hook.mjs"]
+```
+
+When a Codex turn completes, the face speaks the last assistant message
+(clamped, markdown stripped), honoring the same `FACE_HOOK_SPEAK` modes.
+
 ## Both at once
 
 They compose: the hooks bridge gives ambient presence (state and spoken

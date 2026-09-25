@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 /**
- * Claude Code → Codefall Face hook bridge.
+ * Claude Code / Codex → Codefall Face hook bridge.
  *
- * Claude Code pipes each hook event as JSON on stdin; this script maps it to
- * face commands so the face mirrors the session: focus while the agent works,
- * a spoken summary when it stops, a spoken alert when it needs attention.
- * See settings-snippet.json for the hooks configuration.
+ * Claude Code pipes each hook event as JSON on stdin; Codex's `notify`
+ * setting passes its notification JSON as the final argv. Either way this
+ * script maps the event to face commands so the face mirrors the session:
+ * focus while the agent works, a spoken summary when it stops, a spoken
+ * alert when it needs attention. See settings-snippet.json for the Claude
+ * Code hooks configuration; for Codex add to ~/.codex/config.toml:
+ *
+ *   notify = ["node", "/path/to/integrations/claude-code/face-hook.mjs"]
  *
  * Env:
  *   CODEFALL_FACE_URL    face server (default http://localhost:8787)
@@ -101,8 +105,20 @@ export function mapHookEvent(event, {
     }
 
     default:
-      return [];
+      break;
   }
+
+  // Codex notify payloads carry `type` instead of `hook_event_name`.
+  if (event?.type === 'agent-turn-complete') {
+    if (mode === 'off') return [emote('neutral')];
+    const message = event['last-assistant-message'];
+    const spoken = mode !== 'status' && typeof message === 'string' && message.trim()
+      ? clamp(speakable(message), maxChars)
+      : null;
+    return [say(spoken || 'Done.')];
+  }
+
+  return [];
 }
 
 export async function runHook({
@@ -133,10 +149,17 @@ export async function runHook({
 
 const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isMain) {
-  let stdin = '';
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (chunk) => { stdin += chunk; });
-  process.stdin.on('end', async () => {
-    process.exit(await runHook({ input: stdin }));
-  });
+  // Codex `notify` passes the payload as the final argv; Claude Code hooks
+  // pipe it on stdin.
+  const argvJson = process.argv.slice(2).find((arg) => arg.trimStart().startsWith('{'));
+  if (argvJson) {
+    runHook({ input: argvJson }).then((code) => process.exit(code));
+  } else {
+    let stdin = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { stdin += chunk; });
+    process.stdin.on('end', async () => {
+      process.exit(await runHook({ input: stdin }));
+    });
+  }
 }
