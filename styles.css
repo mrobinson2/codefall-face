@@ -318,6 +318,10 @@ body {
 #render-controls select {
   width: 100%;
   min-height: 44px;
+  /* WebKit ignores min-height on native-appearance selects, collapsing the
+     44px touch target to ~18px on iOS/Safari. */
+  -webkit-appearance: none;
+  appearance: none;
   border: 1px solid var(--green-faint);
   border-radius: 3px;
   background: rgba(0, 20, 8, 0.8);
