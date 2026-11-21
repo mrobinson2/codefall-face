@@ -2,7 +2,7 @@
  * Codefall Face — minimal backend.
  *
  * Four jobs, nothing else:
- *   1. Serve the static app (so `npm start` is the whole setup).
+ *   1. Serve the classic face and the built Babylon scene.
  *   2. /relay  — WebSocket relay to Azure Voice Live. Browsers cannot
  *      attach auth headers to WebSockets, so this process holds the
  *      key and pipes frames verbatim in both directions.
@@ -14,8 +14,8 @@
  *      state changes) stream back via webhook and a pollable buffer.
  *      Set FACE_HUB_TOKEN before exposing beyond localhost.
  *
- * Without AZURE_VOICE_LIVE_* env vars the app still works fully —
- * clients just auto-fall back to the local Web Speech provider.
+ * The Azure configuration is optional. The classic face can fall back to
+ * local speech. The Babylon portrait reports that hosted voice is unavailable.
  *
  * deps: ws (the only dependency in the whole project)
  */
@@ -25,18 +25,31 @@ import { readFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 import process from 'node:process';
 import { createStaticHandler } from './lib/static-handler.mjs';
 import { createAgentHub } from './lib/agent-hub.mjs';
+import { createVoiceRelay } from './lib/voice-relay.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PORT = Number(process.env.PORT || 8787);
+const SERVER_DIR = fileURLToPath(new URL('.', import.meta.url));
+const envFile = join(SERVER_DIR, '.env');
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
-const AZURE_ENDPOINT = process.env.AZURE_VOICE_LIVE_ENDPOINT; // e.g. https://myres.cognitiveservices.azure.com
-const AZURE_KEY = process.env.AZURE_VOICE_LIVE_KEY;
-const AZURE_MODEL = process.env.AZURE_VOICE_LIVE_MODEL || 'gpt-4o';
-const AZURE_API_VERSION = process.env.AZURE_VOICE_LIVE_API_VERSION || '2025-05-01-preview';
+const PORT = Number(process.env.PORT || 8787);
+const BIND_HOST = process.env.CODEFALL_BIND_HOST || '127.0.0.1';
+const requestedPayload = Number(process.env.MAX_WS_BYTES);
+const maxPayload = Number.isSafeInteger(requestedPayload) && requestedPayload > 0
+  ? Math.min(requestedPayload, 1024 * 1024) : 256 * 1024;
+const voice = createVoiceRelay({
+  endpoint: process.env.AZURE_VOICE_LIVE_ENDPOINT,
+  key: process.env.AZURE_VOICE_LIVE_KEY,
+  model: process.env.AZURE_VOICE_LIVE_MODEL || undefined,
+  apiVersion: process.env.AZURE_VOICE_LIVE_API_VERSION || undefined,
+  token: process.env.AZURE_VOICE_RELAY_TOKEN,
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || '').split(',').map(origin => origin.trim()).filter(Boolean),
+  maxPayload,
+});
 
 const LACY_API_KEY = process.env.LACY_API_KEY;
 const LACY_BASE = process.env.LACY_BASE || 'https://app.lacy.ai/api';
@@ -47,7 +60,6 @@ const FACE_EVENTS_WEBHOOK = process.env.FACE_EVENTS_WEBHOOK; // optional POST ta
 
 // Piper TTS (fully local neural voice — see server/setup-piper.sh).
 // Defaults point at the setup script's output; override via env.
-const SERVER_DIR = fileURLToPath(new URL('.', import.meta.url));
 const PIPER_BIN = process.env.PIPER_BIN || join(SERVER_DIR, 'piper-venv/bin/piper');
 const PIPER_VOICE = process.env.PIPER_VOICE || join(SERVER_DIR, 'voices/en_US-danny-low.onnx');
 let piperRate = 16000;
@@ -59,10 +71,10 @@ try {
 } catch { /* piper not set up — /api/tts reports unavailable */ }
 
 const staticFiles = createStaticHandler({ root: ROOT });
-
-async function serveStatic(req, res) {
-  return staticFiles.handle(req, res);
-}
+const babylonFiles = createStaticHandler({
+  root: join(ROOT, '_site'),
+  directoryIndexes: { '/babylon/': '/babylon/index.html' },
+});
 
 async function handleLacy(req, res, path) {
   if (path === '/api/lacy/health') {
@@ -153,22 +165,23 @@ async function handleTts(req, res, path) {
 }
 
 const server = http.createServer((req, res) => {
-  const path = new URL(req.url, 'http://x').pathname;
+  let url;
+  try { url = new URL(req.url, 'http://x'); } catch { return res.writeHead(400).end(); }
+  const path = url.pathname;
+  if (path === '/api/voice/health') return voice.handleHealth(req, res);
   if (path.startsWith('/api/lacy/')) return handleLacy(req, res, path);
   if (path.startsWith('/api/face/')) return hub.handleHttp(req, res, path);
   if (path.startsWith('/api/tts')) return handleTts(req, res, path);
-  return serveStatic(req, res);
+  if (path === '/babylon') return res.writeHead(308, { Location: '/babylon/' + url.search }).end();
+  if (path.startsWith('/babylon/')) return babylonFiles.handle(req, res);
+  return staticFiles.handle(req, res);
 });
-
-// ---- Voice Live relay ---------------------------------------------------
-// Reject at the HTTP upgrade when unconfigured, so browser clients get a
-// clean connection error and auto-fall back to the local provider.
-const wss = new WebSocketServer({ noServer: true });
 
 const hubWss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
-  const path = new URL(req.url, 'http://x').pathname;
+  let path;
+  try { path = new URL(req.url, 'http://x').pathname; } catch { return socket.destroy(); }
   if (path === '/agent-hub') {
     if (!hub.authorized(req)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
@@ -178,51 +191,16 @@ server.on('upgrade', (req, socket, head) => {
     hubWss.handleUpgrade(req, socket, head, (ws) => hubWss.emit('connection', ws, req));
     return;
   }
-  if (path !== '/relay') { socket.destroy(); return; }
-  if (!AZURE_ENDPOINT || !AZURE_KEY) {
-    socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
-    socket.destroy();
-    return;
-  }
-  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  if (path === '/relay') return voice.handleUpgrade(req, socket, head);
+  socket.destroy();
 });
 
 hubWss.on('connection', (ws) => hub.handleSocket(ws));
 
-wss.on('connection', (client) => {
-  const wsUrl =
-    AZURE_ENDPOINT.replace(/^http/, 'ws').replace(/\/$/, '') +
-    `/voice-live/realtime?api-version=${AZURE_API_VERSION}` +
-    `&model=${encodeURIComponent(AZURE_MODEL)}`;
-
-  const upstream = new WebSocket(wsUrl, { headers: { 'api-key': AZURE_KEY } });
-  const queue = [];
-
-  upstream.on('open', () => {
-    for (const m of queue) upstream.send(m);
-    queue.length = 0;
-  });
-  client.on('message', (data) => {
-    if (upstream.readyState === WebSocket.OPEN) upstream.send(data);
-    else if (upstream.readyState === WebSocket.CONNECTING) queue.push(data);
-  });
-  upstream.on('message', (data) => {
-    if (client.readyState === WebSocket.OPEN) client.send(data.toString());
-  });
-  const closeBoth = () => { try { client.close(); } catch {} try { upstream.close(); } catch {} };
-  upstream.on('close', closeBoth);
-  upstream.on('error', (err) => {
-    console.error('[relay] upstream error:', err.message);
-    closeBoth();
-  });
-  client.on('close', closeBoth);
-  client.on('error', closeBoth);
-});
-
-server.listen(PORT, () => {
+server.listen(PORT, BIND_HOST, () => {
   console.log(`\n  CODEFALL // FACE`);
-  console.log(`  http://localhost:${PORT}`);
-  console.log(`  Voice Live relay: ${AZURE_ENDPOINT && AZURE_KEY ? 'ARMED' : 'not configured (local Web Speech fallback active)'}`);
+  console.log(`  Listening on ${BIND_HOST} port ${server.address().port}`);
+  console.log(`  Voice Live relay: ${voice.configured ? 'configured' : 'not configured'}`);
   console.log(`  Lacy proxy:       ${LACY_API_KEY ? 'ARMED' : 'not configured'}`);
   console.log(`  Piper TTS:        ${piperReady ? `ARMED (${PIPER_VOICE.split('/').pop()} @ ${piperRate} Hz)` : 'not set up (run server/setup-piper.sh)'}`);
   console.log(`  Agent hub:        ws /agent-hub + POST /api/face/say ` +

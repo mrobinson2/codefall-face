@@ -18,9 +18,10 @@ An expressive, browser-native cyberpunk AI face assembled from luminous code til
 
 ## Run locally
 
-The static experience has no production dependencies:
+Install the build dependencies, then serve the static site.
 
 ```bash
+npm ci
 npm run build
 python3 -m http.server 8080 -d _site
 ```
@@ -37,6 +38,12 @@ npm start
 ```
 
 Then open `http://localhost:8787`.
+
+## Babylon.js scene
+
+Open `http://localhost:8080/babylon/` after starting the static site. This standalone WebGL scene shows a sculpted digital mask with emissive eyes, bloom, and energy particles streaming along curved ribbons. Drag the portrait to orbit. Use the controls to pause motion, adjust the flow speed, or change either color.
+
+Edit [babylon/src/config.ts](babylon/src/config.ts) to set the default palette, tendril count, particles per tendril, stream speed, bloom, and pixel ratio. Run `npm run typecheck:babylon` to check the TypeScript and `npm run build` to apply your changes.
 
 ## Configure
 

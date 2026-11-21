@@ -55,6 +55,8 @@ export class SpeechEngine {
     this._speaking = on;
     if (!on) {
       this._target.open = 0;
+      this._target.wide = 0;
+      this._target.tension = 0;
       this._target.energy = 0;
       this._pulseLevel = 0;
     }

@@ -33,7 +33,7 @@ function cacheControl(pathname) {
   return 'no-cache';
 }
 
-export function createStaticHandler({ root }) {
+export function createStaticHandler({ root, directoryIndexes = {} }) {
   const canonicalRoot = resolve(root);
   return {
     async handle(req, res) {
@@ -52,6 +52,7 @@ export function createStaticHandler({ root }) {
         pathname = '/__invalid__';
       }
       if (pathname === '/') pathname = '/index.html';
+      if (Object.hasOwn(directoryIndexes, pathname)) pathname = directoryIndexes[pathname];
       if (denied(pathname)) return notFound(res);
       const file = resolve(canonicalRoot, `.${pathname}`);
       if (file !== canonicalRoot && !file.startsWith(`${canonicalRoot}${sep}`)) return notFound(res);

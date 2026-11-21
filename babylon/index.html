@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>The Hush · Codefall Face</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="stage">
+      <canvas id="portrait" tabindex="0" aria-label="Interactive 3D portrait of The Hush" aria-describedby="orbit-hint"></canvas>
+      <header class="masthead">
+        <a class="back" href="../"><span aria-hidden="true">↖</span> Canvas 2D</a>
+        <button id="replay" type="button" hidden>Replay reveal</button>
+        <h1>The Hush</h1>
+      </header>
+      <p id="status" class="status" role="status">Loading 3D portrait…</p>
+      <details id="voice-panel" class="voice-panel" hidden>
+        <summary>Talk to The Hush</summary>
+        <div class="voice-interaction">
+          <p id="voice-status" role="status">Voice is off. Type a message or start the microphone.</p>
+          <div class="voice-actions">
+            <button id="voice-mic" type="button" aria-pressed="false">Start microphone</button>
+            <button id="voice-interrupt" type="button" disabled>Interrupt</button>
+            <button id="voice-disconnect" type="button" disabled>Disconnect</button>
+          </div>
+          <form class="voice-form">
+            <input type="text" aria-label="Message to The Hush" placeholder="Type a message" maxlength="1000" required autocomplete="off">
+            <button type="submit">Send</button>
+          </form>
+          <div class="voice-caption">
+            <p id="voice-heard" data-speaker="You" hidden></p>
+            <p id="voice-reply" data-speaker="The Hush" hidden></p>
+          </div>
+        </div>
+      </details>
+      <div id="controls" class="controls" role="group" aria-label="Scene controls" hidden>
+        <div class="moods" role="group" aria-label="Expression">
+          <button type="button" data-mood="happy" aria-pressed="false">Happy</button>
+          <button type="button" data-mood="content" aria-pressed="true">Content</button>
+          <button type="button" data-mood="angry" aria-pressed="false">Angry</button>
+        </div>
+        <button id="motion" type="button" aria-pressed="true">Motion</button>
+        <label class="speed">Flow
+          <input id="speed" type="range" min="0.25" max="2" step="0.05" value="1" aria-label="Flow speed">
+        </label>
+        <label class="swatch">Primary <input id="primary" type="color"></label>
+        <label class="swatch">Accent <input id="accent" type="color"></label>
+      </div>
+      <p id="orbit-hint" class="orbit-hint" hidden>Drag or use arrow keys to orbit</p>
+    </main>
+    <script type="module" src="./scene.js"></script>
+  </body>
+</html>

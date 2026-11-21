@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-static.mjs",
+    "typecheck:babylon": "tsc -p babylon/tsconfig.json",
     "test": "node --test test/*.test.js",
     "test:unit": "node --test test/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
@@ -12,6 +13,9 @@
     "test:all": "npm run test:unit && npm run test:browser"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.0"
+    "@babylonjs/core": "9.37.1",
+    "@playwright/test": "1.61.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
   }
 }

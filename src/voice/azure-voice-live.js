@@ -1,53 +1,18 @@
-/**
- * Azure Voice Live adapter — the primary voice path.
- *
- * Azure AI Voice Live is a low-latency bidirectional realtime voice API
- * (WebSocket transport, OpenAI-Realtime-shaped protocol: session.update,
- * input_audio_buffer.append, response.audio.delta, ...).
- *
- * Why a relay? Browsers cannot set the `api-key` / `Authorization`
- * header on a WebSocket, and shipping the key in a query string would
- * publish it. So the client connects to server/server.mjs, which holds
- * the key and pipes frames verbatim in both directions. The relay is
- * ~100 lines and is the ONLY server-side requirement of this project.
- *
- * Audio in : getUserMedia → AudioWorklet downsampler → PCM16 @ 24 kHz
- *            base64 → input_audio_buffer.append
- * Audio out: response.audio.delta base64 PCM16 @ 24 kHz → scheduled
- *            AudioBufferSourceNodes → GainNode (exposed to the
- *            SpeechEngine's analyser, so mouth motion tracks the real
- *            waveform, not a guess).
- *
- * Protocol notes are current as of api-version 2025-05-01-preview; if
- * Microsoft revs the schema, this file and server/.env are the only
- * touch points.
- */
-
 import { VoiceAdapter } from './adapter.js';
 import { attachGhostFx } from './voice-fx.js';
 
-const OUT_RATE = 24000;
+const RATE = 24000;
+const MAX_TEXT = 4000;
+const MAX_AUDIO_BACKLOG = 256 * 1024;
+const HANDSHAKE_MS = 10000;
+const RESPONSE_MS = 60000;
 
-const WORKLET_SRC = `
-class PCMCapture extends AudioWorkletProcessor {
-  constructor() { super(); this._acc = []; this._accLen = 0; }
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch) return true;
-    // Downsample from context rate to 24kHz (linear), pack PCM16.
-    const ratio = sampleRate / ${OUT_RATE};
-    const outLen = Math.floor(ch.length / ratio);
-    const pcm = new Int16Array(outLen);
-    for (let i = 0; i < outLen; i++) {
-      const v = Math.max(-1, Math.min(1, ch[Math.floor(i * ratio)]));
-      pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
-    }
-    this.port.postMessage(pcm.buffer, [pcm.buffer]);
-    return true;
+function inputText(text) {
+  if (typeof text !== 'string' || !text.trim() || text.length > MAX_TEXT) {
+    throw new Error('Enter between 1 and 4000 characters.');
   }
+  return text.trim();
 }
-registerProcessor('pcm-capture', PCMCapture);
-`;
 
 export class AzureVoiceLiveAdapter extends VoiceAdapter {
   constructor(config) {
@@ -57,291 +22,533 @@ export class AzureVoiceLiveAdapter extends VoiceAdapter {
       tts: true, stt: true, conversational: true, waveform: true, retry: true,
     };
     this._ws = null;
+    this._connection = null;
+    this._failConnection = null;
+    this._ready = false;
+    this._instructions = config.azure?.instructions;
     this._audioCtx = null;
+    this._audioAnnounced = false;
     this._gain = null;
+    this._output = null;
+    this._fx = null;
     this._playHead = 0;
     this._sources = new Set();
-    this._micStream = null;
-    this._micNode = null;
-    this._listening = false;
     this._speaking = false;
-    this._speakResolve = null;
     this._drainTimer = null;
-    this._connectTimer = null;
-    this._connectingWs = null;
-    this._fx = null;
+    this._turn = null;
+    this._ignoredResponses = new Set();
+    this._ignoreNextCreated = false;
+    this._listening = false;
+    this._mic = null;
+    this._micGeneration = 0;
+    this._micStart = null;
+    this._worklet = null;
   }
 
   _relayUrl() {
-    if (this.config.azure.relayUrl) return this.config.azure.relayUrl;
+    if (this.config.azure?.relayUrl) return this.config.azure.relayUrl;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     return `${proto}://${location.host}/relay`;
   }
 
-  async init() {
-    await this._connect();
-    this._ensureAudio();
-    this.emit('ready');
+  init() {
+    if (this._destroyed) return Promise.reject(new Error('Voice session is closed.'));
+    if (!this._connection) {
+      this._connection = this._connect().then(() => {
+        // The 2D provider manager registers listeners after init resolves.
+        this._ensureAudio(false);
+        this.emit('ready');
+      }).catch(error => {
+        this._disposeSocket();
+        this._connection = null;
+        throw error;
+      });
+    }
+    return this._connection;
+  }
+
+  _session() {
+    return {
+      instructions: this._instructions,
+      voice: { name: this.config.azure?.voice || 'en-US-AndrewMultilingualNeural', type: 'azure-standard' },
+      modalities: ['text', 'audio'],
+      input_audio_format: 'pcm16',
+      input_audio_sampling_rate: RATE,
+      output_audio_format: 'pcm16',
+      input_audio_transcription: { model: this.config.azure?.transcriptionModel || 'whisper-1' },
+      turn_detection: { type: 'azure_semantic_vad', threshold: 0.45, create_response: true, interrupt_response: true },
+    };
   }
 
   _connect() {
     return new Promise((resolve, reject) => {
-      let settled = false;
-      const ws = new WebSocket(this._relayUrl());
-      this._connectingWs = ws;
-      const timer = this._connectTimer = setTimeout(() => {
-        if (!settled) { settled = true; ws.close(); reject(new Error('relay timeout')); }
-      }, 4000);
-
-      ws.onopen = () => {
+      const ws = this._ws = new WebSocket(this._relayUrl());
+      let configured = false;
+      const fail = (error) => {
         clearTimeout(timer);
-        this._connectTimer = null;
-        this._connectingWs = null;
-        this._ws = ws;
-        this._send({
-          type: 'session.update',
-          session: {
-            instructions: this.config.azure.instructions,
-            voice: { name: this.config.azure.voice, type: 'azure-standard' },
-            turn_detection: { type: 'azure_semantic_vad', threshold: 0.4 },
-            input_audio_transcription: { model: 'whisper-1' },
-            modalities: ['text', 'audio'],
-          },
-        });
-        if (!settled) { settled = true; resolve(); }
+        this._failConnection = null;
+        this._disposeSocket();
+        reject(error);
+      };
+      const timer = setTimeout(() => fail(new Error('Azure Voice Live did not confirm the session in time.')), HANDSHAKE_MS);
+      this._failConnection = fail;
+      ws.onmessage = ({ data }) => {
+        let message;
+        try { message = JSON.parse(data); } catch { return; }
+        if (!message || typeof message.type !== 'string') return;
+
+        if (!this._ready) {
+          if (message.type === 'session.created' && !configured) {
+            configured = true;
+            this._send({ type: 'session.update', session: this._session() });
+          } else if (message.type === 'session.updated' && configured) {
+            clearTimeout(timer);
+            this._failConnection = null;
+            this._ready = true;
+            resolve();
+          } else if (message.type === 'error') {
+            fail(new Error(message.error?.message || 'Azure Voice Live refused the session.'));
+          }
+          return;
+        }
+        this._handle(message);
       };
       ws.onerror = () => {
-        clearTimeout(timer);
-        this._connectTimer = null;
-        this._connectingWs = null;
-        if (!settled) { settled = true; reject(new Error('relay unreachable')); }
-        else this.emit('error', { message: 'Voice Live socket error' });
+        const error = new Error('Could not connect to Azure Voice Live.');
+        if (!this._ready) fail(error);
+        else this._disconnect(error.message);
       };
       ws.onclose = () => {
-        // Only report loss of a session that actually opened — a rejected
-        // handshake already surfaced through onerror/init rejection.
-        if (this._ws !== ws) return;
-        this._ws = null;
-        this.emit('error', { message: 'Voice Live disconnected', fatal: true });
+        if (!this._ready) fail(new Error('Azure Voice Live closed before the session was ready.'));
+        else this._disconnect('Azure Voice Live disconnected.');
       };
-      ws.onmessage = (e) => this._handle(e.data);
     });
   }
 
+  _disposeSocket() {
+    const ws = this._ws;
+    this._ws = null;
+    this._ready = false;
+    if (!ws) return;
+    ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+    try { ws.close(); } catch { /* already closed */ }
+  }
+
+  _disconnect(message) {
+    this._disposeSocket();
+    this._connection = null;
+    this._ignoreNextCreated = false;
+    this._ignoredResponses.clear();
+    this.stopListening();
+    this._flushPlayback();
+    this._finishTurn(new Error(message));
+    this.emit('error', { message, fatal: true });
+  }
+
   _send(obj) {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._ws.send(JSON.stringify(obj));
+    if (this._ws?.readyState !== WebSocket.OPEN) return false;
+    this._ws.send(JSON.stringify(obj));
+    return true;
+  }
+
+  _requireReady() {
+    if (!this._ready || this._ws?.readyState !== WebSocket.OPEN || this._destroyed) {
+      throw new Error('Connect to Azure Voice Live first.');
     }
   }
 
-  _ensureAudio() {
-    if (this._audioCtx) return;
-    this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    this._gain = this._audioCtx.createGain();
-    let tail = this._gain;
-    const fx = this.config.voiceFx;
-    if (fx?.enabled) {
-      this._fx = attachGhostFx(this._audioCtx, this._gain, fx);
-      tail = this._fx.output;
+  /** Call from the user's click/key gesture before awaiting a network request. */
+  async unlockAudio() {
+    this._ensureAudio();
+    if (this._audioCtx.state === 'suspended' || this._audioCtx.state === 'interrupted') {
+      await this._audioCtx.resume();
     }
-    tail.connect(this._audioCtx.destination);
-    // The speech engine analyses the post-FX signal, so the mouth
-    // tracks what the human actually hears.
-    this.emit('audionode', { ctx: this._audioCtx, node: tail });
   }
 
-  _handle(raw) {
-    let msg;
-    try { msg = JSON.parse(raw); } catch { return; }
-    switch (msg.type) {
-      case 'response.audio.delta':
-        this._playChunk(msg.delta);
-        break;
-      case 'response.audio_transcript.delta':
-        this.emit('transcript', { role: 'agent', text: msg.delta, final: false });
-        break;
-      case 'response.audio_transcript.done':
-        this.emit('transcript', { role: 'agent', text: msg.transcript, final: true });
-        break;
-      case 'conversation.item.input_audio_transcription.completed':
-        this.emit('transcript', { role: 'user', text: msg.transcript, final: true });
-        break;
-      case 'input_audio_buffer.speech_started':
-        // Barge-in: the human spoke over the ghost.
-        this._flushPlayback();
-        this.emit('statechange', { state: 'listening' });
-        break;
-      case 'response.created':
+  _ensureAudio(announce = true) {
+    if (this._destroyed) throw new Error('Voice session is closed.');
+    if (!this._audioCtx) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) throw new Error('This browser does not support Web Audio.');
+      this._audioCtx = new AudioContext();
+      this._gain = this._audioCtx.createGain();
+      this._gain.gain.value = this.muted ? 0 : 1;
+      const fx = this.config.voiceFx;
+      if (fx?.enabled) this._fx = attachGhostFx(this._audioCtx, this._gain, fx);
+      this._output = this._fx?.output || this._gain;
+      this._output.connect(this._audioCtx.destination);
+    }
+    if (announce && !this._audioAnnounced) {
+      this._audioAnnounced = true;
+      this.emit('audionode', { ctx: this._audioCtx, node: this._output });
+    }
+  }
+
+  updateInstructions(instructions) {
+    this._instructions = inputText(instructions);
+    if (this._ready) this._send({ type: 'session.update', session: { instructions: this._instructions } });
+  }
+
+  async ask(text) {
+    this._requireReady();
+    text = inputText(text);
+    return this._requestResponse({ type: 'response.create' }, {
+      type: 'conversation.item.create',
+      item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    });
+  }
+
+  async speak(text, opts = {}) {
+    this._requireReady();
+    text = inputText(text);
+    if (this._turn) this.interrupt();
+    const response = opts.verbatim === false
+      ? { instructions: text }
+      : { pre_generated_assistant_message: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text }],
+      } };
+    return this._requestResponse({ type: 'response.create', response });
+  }
+
+  _requestResponse(request, preceding) {
+    if (this._turn) throw new Error('Wait for the current reply or interrupt it first.');
+    return new Promise((resolve, reject) => {
+      const turn = this._beginTurn({ resolve, reject });
+      this.emit('statechange', { state: 'thinking' });
+      try {
+        if (preceding && !this._send(preceding)) throw new Error('Azure Voice Live disconnected.');
+        if (!this._send(request)) throw new Error('Azure Voice Live disconnected.');
+      } catch (error) {
+        if (this._turn === turn) this._finishTurn(error);
+      }
+    });
+  }
+
+  _beginTurn(callbacks = {}) {
+    const turn = {
+      ...callbacks,
+      id: null,
+      done: false,
+      hasAudioTranscript: false,
+      text: '',
+      playback: null,
+      timer: setTimeout(() => {
+        this._cancelResponse(new Error('Azure Voice Live did not finish the reply in time.'));
+        this.emit('error', { message: 'Azure Voice Live did not finish the reply in time.' });
+      }, RESPONSE_MS),
+    };
+    this._turn = turn;
+    return turn;
+  }
+
+  _emitTranscript(role, text, final, itemId) {
+    if (typeof text === 'string' && text) this.emit('transcript', { role, text, final, itemId });
+  }
+
+  _handle(message) {
+    const turn = this._turn;
+    const id = message.response_id || message.response?.id;
+    if (id && this._ignoredResponses.has(id)) {
+      if (message.type === 'response.done') this._ignoredResponses.delete(id);
+      return;
+    }
+    if (id && turn?.id && turn.id !== id && message.type !== 'response.created') return;
+
+    switch (message.type) {
+      case 'response.created': {
+        if (this._ignoreNextCreated) {
+          this._ignoreNextCreated = false;
+          this._ignoreResponse(id);
+          break;
+        }
+        if (id && turn?.id && turn.id !== id) {
+          // A new server turn can follow a reply whose last samples are still queued.
+          this._ignoreResponse(turn.id);
+          this._flushPlayback();
+          this._finishTurn();
+        }
+        const current = this._turn || this._beginTurn();
+        current.id = id;
         this.emit('statechange', { state: 'thinking' });
         break;
+      }
+      case 'response.audio.delta':
+        if (turn && !turn.done) this._playChunk(message);
+        break;
+      case 'response.audio_transcript.delta':
+      case 'response.audio_transcript.done': {
+        if (!turn) break;
+        turn.hasAudioTranscript = true;
+        const final = message.type.endsWith('.done');
+        this._emitTranscript('agent', final ? message.transcript : message.delta, final, message.item_id);
+        break;
+      }
+      case 'response.text.delta':
+        if (turn && typeof message.delta === 'string') turn.text += message.delta;
+        break;
+      case 'response.text.done':
+        if (turn && typeof message.text === 'string') turn.text = message.text;
+        break;
+      case 'conversation.item.input_audio_transcription.delta':
+        this._emitTranscript('user', message.delta, false, message.item_id);
+        break;
+      case 'conversation.item.input_audio_transcription.completed':
+        this._emitTranscript('user', message.transcript, true, message.item_id);
+        break;
+      case 'conversation.item.input_audio_transcription.failed':
+        this.emit('error', { message: message.error?.message || 'Azure speech recognition failed.' });
+        break;
+      case 'input_audio_buffer.speech_started':
+        // Server VAD cancels generation. Stop local audio immediately and disregard late chunks.
+        this._cancelResponse(null, false);
+        if (this._listening) this.emit('statechange', { state: 'listening' });
+        break;
+      case 'input_audio_buffer.speech_stopped':
+        if (this._listening) this.emit('statechange', { state: 'thinking' });
+        break;
       case 'response.done':
-        this._endSpeechWhenDrained();
+        if (!turn) break;
+        turn.done = true;
+        clearTimeout(turn.timer);
+        if (!turn.hasAudioTranscript) this._emitTranscript('agent', turn.text, true, undefined);
+        if (message.response?.status === 'failed') {
+          const error = new Error(message.response.status_details?.error?.message || 'Azure Voice Live could not generate the reply.');
+          this._flushPlayback();
+          this._finishTurn(error);
+          this.emit('error', { message: error.message });
+        } else {
+          const delay = this._audioCtx?.state === 'running'
+            ? Math.max(0, this._playHead - this._audioCtx.currentTime) * 1000 : 0;
+          if (delay > 0) {
+            this._drainTimer = setTimeout(() => this._finishTurn(), delay + 35);
+          } else {
+            if (this._sources.size) this._flushPlayback();
+            this._finishTurn();
+          }
+        }
         break;
-      case 'error':
-        this.emit('error', { message: msg.error?.message || 'Voice Live error' });
+      case 'error': {
+        const info = message.error;
+        if (info?.code === 'response_cancel_not_active' || /no active response/i.test(info?.message || '')) {
+          this._ignoreNextCreated = false;
+          break;
+        }
+        const error = new Error(info?.message || 'Azure Voice Live reported an error.');
+        if (turn) {
+          this._flushPlayback();
+          this._finishTurn(error);
+        }
+        this.emit('error', { message: error.message });
         break;
+      }
     }
   }
 
-  _playChunk(b64) {
+  _playChunk({ delta, item_id, content_index }) {
+    if (typeof delta !== 'string' || !delta) return;
+    let pcm;
+    try { pcm = atob(delta); } catch { return; }
+    if (!pcm.length || pcm.length % 2) return;
     this._ensureAudio();
-    const bin = atob(b64);
-    const pcm = new Int16Array(bin.length / 2);
-    for (let i = 0; i < pcm.length; i++) {
-      pcm[i] = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8);
+    const audio = this._audioCtx;
+    const buffer = audio.createBuffer(1, pcm.length / 2, RATE);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) {
+      const sample = pcm.charCodeAt(i * 2) | (pcm.charCodeAt(i * 2 + 1) << 8);
+      samples[i] = (sample >= 32768 ? sample - 65536 : sample) / 32768;
     }
-    const buf = this._audioCtx.createBuffer(1, pcm.length, OUT_RATE);
-    const ch = buf.getChannelData(0);
-    for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 0x8000;
 
-    const src = this._audioCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(this._gain);
-    const now = this._audioCtx.currentTime;
-    if (this._playHead < now + 0.02) this._playHead = now + 0.02;
-    src.start(this._playHead);
-    this._playHead += buf.duration;
-    this._sources.add(src);
-    src.onended = () => {
-      this._sources.delete(src);
-      try { src.disconnect(); } catch { /* already disconnected */ }
+    const source = audio.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this._gain);
+    this._playHead = Math.max(this._playHead, audio.currentTime + 0.025);
+    const turn = this._turn;
+    if (turn.playback?.itemId !== item_id || !turn.playback) {
+      turn.playback = { itemId: item_id, contentIndex: content_index ?? 0, starts: this._playHead, duration: 0 };
+    }
+    turn.playback.duration += buffer.duration;
+    source.start(this._playHead);
+    this._playHead += buffer.duration;
+    this._sources.add(source);
+    source.onended = () => {
+      this._sources.delete(source);
+      source.disconnect();
+      if (turn === this._turn && turn.done && !this._sources.size) this._finishTurn();
     };
 
     if (!this._speaking) {
       this._speaking = true;
       this.emit('speechstart');
+      this.emit('statechange', { state: 'speaking' });
     }
   }
 
-  _endSpeechWhenDrained() {
-    const remaining = this._audioCtx
-      ? Math.max(0, this._playHead - this._audioCtx.currentTime) : 0;
-    if (this._drainTimer != null) clearTimeout(this._drainTimer);
-    this._drainTimer = setTimeout(() => {
-      this._drainTimer = null;
-      this._finishSpeech();
-    }, remaining * 1000 + 60);
-  }
-
-  _finishSpeech() {
+  _finishTurn(error) {
+    const turn = this._turn;
+    this._turn = null;
+    clearTimeout(turn?.timer);
+    clearTimeout(this._drainTimer);
+    this._drainTimer = null;
     if (this._speaking) {
       this._speaking = false;
       this.emit('speechend');
     }
-    const resolve = this._speakResolve;
-    this._speakResolve = null;
-    if (resolve) resolve();
+    if (turn) this.emit('statechange', { state: this._listening ? 'listening' : 'idle' });
+    if (error) turn?.reject?.(error);
+    else turn?.resolve?.();
   }
 
   _flushPlayback() {
-    if (this._drainTimer != null) clearTimeout(this._drainTimer);
-    this._drainTimer = null;
-    for (const s of this._sources) {
-      s.onended = null;
-      try { s.stop(); } catch { /* ok */ }
-      try { s.disconnect(); } catch { /* ok */ }
+    for (const source of this._sources) {
+      source.onended = null;
+      try { source.stop(); } catch { /* already stopped */ }
+      source.disconnect();
     }
     this._sources.clear();
     this._playHead = 0;
-    this._finishSpeech();
   }
 
-  /** Say `text` verbatim through the realtime voice. */
-  async speak(text, opts = {}) {
-    this.interrupt();
-    return new Promise((resolve) => {
-      this._speakResolve = resolve;
-      this._send({
-        type: 'response.create',
-        response: {
-          modalities: ['text', 'audio'],
-          instructions:
-            (opts.verbatim === false ? '' : 'Say exactly the following, nothing else: ') + text,
-        },
-      });
-    });
+  _ignoreResponse(id) {
+    if (!id) return;
+    this._ignoredResponses.add(id);
+    if (this._ignoredResponses.size > 32) {
+      this._ignoredResponses.delete(this._ignoredResponses.values().next().value);
+    }
   }
 
-  async startListening() {
-    if (this._listening) return;
-    this._ensureAudio();
-    if (this._audioCtx.state === 'suspended') await this._audioCtx.resume();
-    this._micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
-    });
-    const blob = new Blob([WORKLET_SRC], { type: 'application/javascript' });
-    const url = URL.createObjectURL(blob);
-    await this._audioCtx.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
-
-    const src = this._audioCtx.createMediaStreamSource(this._micStream);
-    const node = new AudioWorkletNode(this._audioCtx, 'pcm-capture');
-    node.port.onmessage = (e) => {
-      if (!this._listening) return;
-      const bytes = new Uint8Array(e.data);
-      let bin = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  _cancelResponse(error, notifyServer = true) {
+    const turn = this._turn;
+    if (turn && !turn.done) {
+      this._ignoreNextCreated ||= !turn.id;
+      this._ignoreResponse(turn.id);
+      if (notifyServer) this._send({ type: 'response.cancel' });
+    }
+    const playback = turn?.playback;
+    if (playback?.itemId && this._audioCtx) {
+      const played = Math.max(0, this._audioCtx.currentTime - playback.starts);
+      if (played < playback.duration) {
+        this._send({
+          type: 'conversation.item.truncate',
+          item_id: playback.itemId,
+          content_index: playback.contentIndex,
+          audio_end_ms: Math.floor(played * 1000),
+        });
       }
-      this._send({ type: 'input_audio_buffer.append', audio: btoa(bin) });
-    };
-    src.connect(node);
-    this._micNode = { src, node };
-    this._listening = true;
-    this.emit('listeningchange', { listening: true });
-  }
-
-  async stopListening() {
-    this._listening = false;
-    if (this._micNode) {
-      try { this._micNode.src.disconnect(); this._micNode.node.disconnect(); } catch { /* ok */ }
-      this._micNode = null;
     }
-    if (this._micStream) {
-      this._micStream.getTracks().forEach((t) => t.stop());
-      this._micStream = null;
-    }
-    this.emit('listeningchange', { listening: false });
+    this._flushPlayback();
+    this._finishTurn(error);
   }
 
   interrupt() {
-    this._send({ type: 'response.cancel' });
-    this._flushPlayback();
+    this._cancelResponse();
   }
 
-  setMuted(m) {
-    this.muted = m;
-    if (this._gain) this._gain.gain.value = m ? 0 : 1;
+  startListening() {
+    try { this._requireReady(); } catch (error) { return Promise.reject(error); }
+    if (this._listening) return Promise.resolve();
+    if (this._micStart) return this._micStart;
+    const generation = ++this._micGeneration;
+    const starting = this._startMicrophone(generation).finally(() => {
+      if (this._micStart === starting) this._micStart = null;
+    });
+    this._micStart = starting;
+    return starting;
+  }
+
+  async _startMicrophone(generation) {
+    const devices = navigator.mediaDevices;
+    if (!devices?.getUserMedia) throw new Error('Microphone capture needs HTTPS or localhost.');
+    await this.unlockAudio();
+    if (generation !== this._micGeneration) return;
+    const audio = this._audioCtx;
+    if (!audio.audioWorklet) throw new Error('This browser does not support microphone audio worklets.');
+    let stream;
+    try {
+      stream = await devices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    } catch (error) {
+      if (generation === this._micGeneration) throw error;
+      return;
+    }
+    let src;
+    let node;
+    let sink;
+    try {
+      if (generation !== this._micGeneration) return;
+      if (!this._worklet) {
+        const url = this.config.azure?.workletUrl || new URL('./azure-pcm-capture.js', import.meta.url).href;
+        this._worklet = audio.audioWorklet.addModule(url).catch(error => {
+          this._worklet = null;
+          throw error;
+        });
+      }
+      await this._worklet;
+      if (generation !== this._micGeneration) return;
+      src = audio.createMediaStreamSource(stream);
+      node = new AudioWorkletNode(audio, 'azure-pcm-capture');
+      // Keep the graph running without feeding the microphone back to speakers.
+      sink = audio.createGain();
+      sink.gain.value = 0;
+      node.connect(sink).connect(audio.destination);
+      src.connect(node);
+      node.port.onmessage = ({ data }) => {
+        if (!this._listening || generation !== this._micGeneration) return;
+        if (this._ws?.bufferedAmount > MAX_AUDIO_BACKLOG) {
+          this._disconnect('The voice connection could not keep up with the microphone.');
+          return;
+        }
+        const audio = btoa(String.fromCharCode(...new Uint8Array(data)));
+        this._send({ type: 'input_audio_buffer.append', audio });
+      };
+      this._mic = { stream, src, node, sink };
+      this._listening = true;
+      this.emit('listeningchange', { listening: true });
+      if (!this._turn) this.emit('statechange', { state: 'listening' });
+    } finally {
+      if (this._mic?.stream !== stream) {
+        src?.disconnect();
+        node?.disconnect();
+        sink?.disconnect();
+        for (const track of stream.getTracks()) track.stop();
+      }
+    }
+  }
+
+  async stopListening() {
+    ++this._micGeneration;
+    this._micStart = null;
+    const mic = this._mic;
+    this._mic = null;
+    if (!mic) return;
+    this._listening = false;
+    mic.node.port.onmessage = null;
+    mic.node.port.close();
+    mic.src.disconnect();
+    mic.node.disconnect();
+    mic.sink.disconnect();
+    for (const track of mic.stream.getTracks()) track.stop();
+    this._send({ type: 'input_audio_buffer.clear' });
+    this.emit('listeningchange', { listening: false });
+    if (!this._turn) this.emit('statechange', { state: 'idle' });
+  }
+
+  setMuted(muted) {
+    this.muted = muted;
+    if (this._gain) this._gain.gain.value = muted ? 0 : 1;
   }
 
   destroy() {
-    if (this._destroyed) return false;
+    if (!super.destroy()) return false;
+    this._failConnection?.(new Error('Voice session is closed.'));
     this.interrupt();
     this.stopListening();
-    if (this._connectTimer != null) clearTimeout(this._connectTimer);
-    this._connectTimer = null;
-    if (this._connectingWs) {
-      this._connectingWs.onopen = null;
-      this._connectingWs.onerror = null;
-      this._connectingWs.onclose = null;
-      this._connectingWs.onmessage = null;
-      try { this._connectingWs.close(); } catch { /* ok */ }
-      this._connectingWs = null;
-    }
-    if (this._ws) {
-      this._ws.onopen = null;
-      this._ws.onerror = null;
-      this._ws.onclose = null;
-      this._ws.onmessage = null;
-      this._ws.close();
-      this._ws = null;
-    }
-    if (this._fx) { this._fx.destroy(); this._fx = null; }
-    if (this._gain) {
-      try { this._gain.disconnect(); } catch { /* ok */ }
-      this._gain = null;
-    }
-    if (this._audioCtx) { this._audioCtx.close(); this._audioCtx = null; }
-    return super.destroy();
+    this._disposeSocket();
+    this._fx?.destroy();
+    this._gain?.disconnect();
+    this._audioCtx?.close().catch(() => {});
+    this._audioCtx = this._gain = this._output = null;
+    this._worklet = this._fx = null;
+    return true;
   }
 }

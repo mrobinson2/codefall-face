@@ -26,6 +26,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run test:browser -- --project=chromium --project=reduced-motion
+      - run: npm run typecheck:babylon
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -57,6 +58,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
       - uses: cloudflare/wrangler-action@v3
         with:
